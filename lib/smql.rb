@@ -1,0 +1,7 @@
+require 'active_support/benchmarkable'
+require 'active_support/core_ext/array.rb'
+require 'active_record'
+require 'json'
+require 'smql_to_ar'
+require 'smql_to_ar/condition_types'
+require 'smql_to_ar/query_builder'
