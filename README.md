@@ -1,7 +1,7 @@
 Idea
 ====
 
-Similar to MQL:  SMQL allows queries on your database but in a JSON-based language.
+Similar to MQL:  SMQL allows to perform queries on your database but in a JSON-based language.
 
 This query language is SQL-injection-safe.
 However, expensive queries can slow down your machine.
