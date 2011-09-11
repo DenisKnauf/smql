@@ -30,10 +30,9 @@ class SmqlToAR
 
 		attr_reader :table_alias, :model, :table_model, :base_table, :_where, :_select, :_wobs, :_joins
 		attr_accessor :logger
-		@@logger = SmqlToAR.logger
 
 		def initialize model
-			@logger = @@logger
+			@logger = SmqlToAR.logger
 			@table_alias = Hash.new do |h, k|
 				k = Array.wrap k
 				h[k] = "smql,#{k.join(',')}"

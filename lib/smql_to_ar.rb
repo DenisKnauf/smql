@@ -157,12 +157,18 @@ class SmqlToAR
 
 	attr_reader :model, :query, :conditions, :builder, :order
 	attr_accessor :logger
-	@@logger = if Object.const_defined?( :Rails)
-			Rails.logger
-		else
-			require 'logger'
-			Logger.new $stdout
+	if defined? Rails
+		class Railtie < ::Rails::Railtie
+			initializer "active_record.logger" do
+				SmqlToAR.logger = ::Rails.logger
+				$stderr.puts( { self: self, logger: SmqlToAR.logger}.inspect)
+			end
 		end
+	else
+		require 'logger'
+		@@logger = Logger.new $stdout
+		$stderr.puts( { logger: @@logger}.inspect)
+	end
 
 	class <<self
 		def logger=(logger)  @@logger = logger  end
