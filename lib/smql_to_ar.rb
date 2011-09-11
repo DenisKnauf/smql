@@ -161,13 +161,11 @@ class SmqlToAR
 		class Railtie < ::Rails::Railtie
 			initializer "active_record.logger" do
 				SmqlToAR.logger = ::Rails.logger
-				$stderr.puts( { self: self, logger: SmqlToAR.logger}.inspect)
 			end
 		end
 	else
 		require 'logger'
 		@@logger = Logger.new $stdout
-		$stderr.puts( { logger: @@logger}.inspect)
 	end
 
 	class <<self
@@ -209,7 +207,7 @@ class SmqlToAR
 		benchmark 'SMQL' do
 			parse
 			build
-			ar.tap {|ar| logger.info ar.to_sql }
+			ar
 		end
 	end
 
