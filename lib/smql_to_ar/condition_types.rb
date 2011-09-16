@@ -177,7 +177,7 @@ class SmqlToAR
 				builder.wobs (v = builder.vid).to_sym => @value
 				@cols.each do |col|
 					col.joins builder, table
-					builder.where self.class::Where % [ builder.column( table, col), v.to_s]
+					builder.where self.class::Where % [ builder.column( table+col.path, col.col), v.to_s]
 				end
 				self
 			end
