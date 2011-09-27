@@ -22,23 +22,24 @@ class SmqlToAR
 		class Vid
 			attr_reader :vid
 			def initialize( vid)  @vid = vid  end
-			def to_s() ":c#{@vid}" end
-			def to_sym() "c#{@vid}".to_sym end
+			def to_s() ":smql_c#{@vid}" end
+			def to_sym() "smql_c#{@vid}".to_sym end
 			alias sym to_sym
 			def to_i()  @vid  end
 		end
 
-		attr_reader :table_alias, :model, :table_model, :base_table, :_where, :_select, :_wobs, :_joins
+		attr_reader :table_alias, :model, :table_model, :base_table, :_where, :_select, :_wobs, :_joins, :prefix, :_vid
 		attr_accessor :logger
 
-		def initialize model
+		def initialize model, prefix = nil, base_table
+			@prefix = "smql"
 			@logger = SmqlToAR.logger
 			@table_alias = Hash.new do |h, k|
 				k = Array.wrap k
-				h[k] = "smql,#{k.join(',')}"
+				h[k] = "#{@prefix},#{k.join(',')}"
 			end
 			@_vid, @_where, @_wobs, @model, @quoter = 0, [], {}, model, model.connection
-			@base_table = [model.table_name.to_sym]
+			@base_table = base_table.blank? ? [model.table_name.to_sym] : Array.wrap( base_table)
 			@table_alias[ @base_table] = @base_table.first
 			t = quote_table_name @table_alias[ @base_table]
 			@_select, @_joins, @_joined, @_includes, @_order = ["DISTINCT #{t}.*"], "", [], [], []
@@ -74,30 +75,55 @@ class SmqlToAR
 		end
 
 		def build_join orig, pretable, table, prekey, key
-			" JOIN #{quote_table_name orig.to_sym} AS #{quote_table_name table} ON #{column pretable, prekey} = #{column table, key} "
+			" JOIN #{orig} AS #{quote_table_name table} ON #{column pretable, prekey} = #{column table, key} "
 		end
 
-		def join table, model
-			return self  if @_joined.include? table # Already joined
-			pretable = table[0...-1]
+		def sub_join table, col, model, query
+			pp [:sub_join, table, col. model, query]
+			prefix, base_table = "#{@prefix}_sub", col.col
+			join_ table, model, "(#{query.build( prefix, base_table).tap{|q| p :sub_join => q }.ar.to_sql})"
+		end
+
+		def join_ table, model, query, pretable = nil
+			pp [:join_, table, model, query]
+			pretable ||= table[0...-1]
 			@table_model[ table] = model
 			premodel = @table_model[ pretable]
 			t = @table_alias[ table]
 			pt = quote_table_name @table_alias[ table[ 0...-1]]
+			pp premodel: premodel, table: table
 			refl = premodel.reflections[table.last]
-			case refl.macro
-			when :has_many
-				@_joins += build_join model.table_name, pretable, t, premodel.primary_key, refl.primary_key_name
-			when :belongs_to
-				@_joins += build_join model.table_name, pretable, t, refl.primary_key_name, premodel.primary_key
-			when :has_and_belongs_to_many
-				jointable = [','] + table
-				@_joins += build_join refl.options[:join_table], pretable, @table_alias[jointable], premodel.primary_key, refl.primary_key_name
-				@_joins += build_join model.table_name, jointable, t, refl.association_foreign_key, refl.association_primary_key
-			else raise BuilderError, "Unkown reflection macro: #{refl.macro.inspect}"
+			case refl
+			when ActiveRecord::Reflection::ThroughReflection
+				through = refl.through_reflection
+				pp refl: refl
+				throughtable = table[0...-1]+[through.name.to_sym]
+				srctable = throughtable+[refl.source_reflection.name]
+				@table_model[ srctable] = model
+				@table_alias[ table] = @table_alias[ srctable]
+				join_ throughtable, through.klass, quote_table_name( through.table_name)
+				join_ srctable, refl.klass, query, throughtable
+			when ActiveRecord::Reflection::AssociationReflection
+				case refl.macro
+				when :has_many
+					@_joins += build_join query, pretable, t, premodel.primary_key, refl.primary_key_name
+				when :belongs_to
+					@_joins += build_join query, pretable, t, refl.primary_key_name, premodel.primary_key
+				when :has_and_belongs_to_many
+					jointable = [','] + table
+					@_joins += build_join refl.options[:join_table], pretable, @table_alias[jointable], premodel.primary_key, refl.primary_key_name
+					@_joins += build_join query, jointable, t, refl.association_foreign_key, refl.association_primary_key
+				else raise BuilderError, "Unkown reflection macro: #{refl.macro.inspect}"
+				end
+			else raise BuilderError, "Unkown reflection type: #{refl.class.name}"
 			end
-			@_joined.push table
 			self
+		end
+
+		def join table, model
+			return self  if @_joined.include? table # Already joined
+			join_ table, model, quote_table_name( model.table_name)
+			@_joined.push table
 		end
 
 		def includes table
@@ -112,6 +138,14 @@ class SmqlToAR
 
 		def order table, col, o
 			@_order.push "#{column table, col} #{:DESC == o ? :DESC : :ASC}"
+		end
+
+		def limit count
+			@_limit = count
+		end
+
+		def offset count
+			@_offset = count
 		end
 
 		class Dummy
@@ -138,6 +172,9 @@ class SmqlToAR
 				where( where_str, @_wobs).
 				order( @_order.join( ', ')).
 				includes( incls)
+			@model = @model.limit @_limit  if @_limit
+			@model = @model.offset @_offset  if @_offset
+			@model
 		end
 
 		def fix_calculate

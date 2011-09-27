@@ -15,6 +15,18 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 class SmqlToAR
+	module Assertion
+		def raise_unless cond, exception = nil, *args
+			cond, exception, *args = yield. cond, exception, *args  if block_given?
+			raise exception || Exception, *args  unless cond
+		end
+
+		def raise_if cond, exception = nil, *args
+			cond, exception, *args = yield. cond, exception, *args  if block_given?
+			raise exception || Exception, *args  if cond
+		end
+	end
+
 	include ActiveSupport::Benchmarkable
 	############################################################################r
 	# Exceptions
@@ -77,9 +89,15 @@ class SmqlToAR
 		end
  	end
 
-	class OnlyOrderOnBaseError < SMQLError
+	class RootOnlyFunctionError < SMQLError
 		def initialize path
 			super :path => path
+		end
+	end
+
+	class ConColumnError < SMQLError
+		def initialize expected, got
+			super :expected => expected, :got => got
 		end
 	end
 
@@ -103,7 +121,7 @@ class SmqlToAR
 		def initialize model, *col
 			@model = model
 			@last_model = nil
-			*@path, @col = Array.wrap( col).collect {|s| s.to_s.split /[.\/]/ }.flatten.collect &:to_sym
+			*@path, @col = Array.wrap( col).collect( &it.to_s.split( /[.\/]/)).flatten.collect( &:to_sym)
 		end
 
 		def last_model
@@ -146,6 +164,8 @@ class SmqlToAR
 				exe.call pp, model
 			end
 	 	end
+		def length() @path.length+1  end
+		def size()   @path.size+1  end
 		def to_a()   @path+[@col]  end
 		def to_s()   to_a.join '.'  end
 		def to_sym() to_s.to_sym  end
@@ -153,6 +173,7 @@ class SmqlToAR
 		def inspect()  "#<Column: #{model} #{to_s}>"  end
 		def relation()  SmqlToAR.model_of last_model, @col  end
 		def allowed?()  ! self.protected?  end
+		def child?()  @path.empty? and !!relation  end
 	end
 
 	attr_reader :model, :query, :conditions, :builder, :order
@@ -179,6 +200,23 @@ class SmqlToAR
 		#p model: @model, query: @query
 	end
 
+	def self.models models
+		models = Array.wrap models
+		r = Hash.new {|h,k| h[k] = {} }
+		while model = models.tap( &:uniq!).pop
+			refls = model.respond_to?( :reflections) && model.reflections
+			refls && refls.each do |name, refl|
+				r[model.name][name] = case refl
+					when ActiveRecord::Reflection::ThroughReflection then {:macro => refl.macro, :model => refl.klass.name, :through => refl.through_reflection.name}
+					when ActiveRecord::Reflection::AssociationReflection then {:macro => refl.macro, :model => refl.klass.name}
+					else raise "Ups: #{refl.class}"
+					end
+				models.push refl.klass  unless r.keys.include? refl.klass.name
+			end
+		end
+		r
+	end
+
 	def parse
 		benchmark 'SMQL parse' do
 			@conditions = ConditionTypes.try_parse @model, @query
@@ -187,11 +225,11 @@ class SmqlToAR
 		self
 	end
 
-	def build
+	def build prefix = nil, base_table = nil
 		benchmark 'SMQL build query' do
-			@builder = QueryBuilder.new @model
+			@builder = QueryBuilder.new @model, prefix, base_table
 			table = @builder.base_table
-			@conditions.each {|condition| condition.build builder, table }
+			@conditions.each &it.build( builder, table)
 		end
 		#p builder: @builder
 		self

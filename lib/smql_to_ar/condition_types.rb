@@ -25,6 +25,8 @@ class SmqlToAR
 	# Nimmt eine Klasse ein Objekt an,  so soll diese Klasse instanziert werden.
 	# Alles weitere siehe Condition.
 	module ConditionTypes
+		extend SmqlToAR::Assertion
+
 		class <<self
 			# Ex: 'givenname|surname|nick' => [:givenname, :surname, :nick]
 			def split_keys k
@@ -40,13 +42,13 @@ class SmqlToAR
 					next  if :Condition == c
 					c = const_get c
 					next  if Condition === c
-					raise UnexpectedColOpError.new( model, colop, val)  unless colop =~ /^(?:\d*:)?(.*?)(\W*)$/
+					raise_unless colop =~ /^(?:\d*:)?(.*?)(\W*)$/, UnexpectedColOpError.new( model, colop, val)
 					col, op = $1, $2
 					col = split_keys( col).collect {|c| Column.new model, c }
 					r = c.try_parse model, col, op, val
 					break  if r
 				end
-				raise UnexpectedError.new( model, colop, val)  unless r
+				raise_unless r, UnexpectedError.new( model, colop, val)
 				r
 			end
 
@@ -72,6 +74,8 @@ class SmqlToAR
 		end
 
 		class Condition
+			include SmqlToAR::Assertion
+			extend SmqlToAR::Assertion
 			attr_reader :value, :cols
 			Operator = nil
 			Expected = []
@@ -81,7 +85,7 @@ class SmqlToAR
 			# Passt das Object,  die Klasse instanzieren.
 			def self.try_parse model, cols, op, val
 				#p :self => name, :try_parse => op, :cols => cols, :with => self::Operator, :value => val, :expected => self::Expected, :model => model.name
-				new model, cols, val  if self::Operator === op and self::Expected.any? {|i| i === val }
+				new model, cols, val  if self::Operator === op and self::Expected.any?( &it === val)
 			end
 
 			def initialize model, cols, val
@@ -103,14 +107,14 @@ class SmqlToAR
 			# Gibt es eine Spalte diesen Namens?
 			# Oder:  Gibt es eine Relation diesen Namens?  (Hier nicht der Fall)
 			def verify_column col
-				raise NonExistingColumnError.new( %w[Column], col)  unless col.exist_in?
+				raise_unless col.exist_in?, NonExistingColumnError.new( %w[Column], col)
 			end
 
 			# Modelle koennen Spalten/Relationen verbieten mit Model#smql_protected.
 			# Dieses muss ein Object mit #include?( name_als_string) zurueckliefern,
 			# welches true fuer verboten und false fuer, erlaubt steht.
 			def verify_allowed col
-				raise ProtectedColumnError.new( col)  if col.protected?
+				raise_if col.protected?, ProtectedColumnError.new( col)
 			end
 
 			# Erstelle alle noetigen Klauseln. builder nimmt diese entgegen,
@@ -196,31 +200,64 @@ class SmqlToAR
 				super( *pars)
 				cols = {}
 				@cols.each do |col|
-					col_model = SmqlToAR.model_of col.last_model, col.col
-					#p col_model: col_model.to_s, value: @value
+					col_model = col.relation
 					cols[col] = [col_model] + ConditionTypes.try_parse( col_model, @value)
 				end
 				@cols = cols
 			end
 
 			def verify_column col
-				refl = SmqlToAR.model_of col.last_model, col.col
-				#p refl: refl, model: @model.name, col: col, :reflections => @model.reflections.keys
-				raise NonExistingRelationError.new( %w[Relation], col)  unless refl
+				raise_unless col.relation, NonExistingRelationError.new( %w[Relation], col)
 			end
 
 			def build builder, table
 				@cols.each do |col, sub|
 					t = table + col.path + [col.col]
-					#p sub: sub
-					p col: col, joins: col.joins
 					col.joins.each {|j, m| builder.join table+j, m }
-					builder.join t, SmqlToAR.model_of( col.last_model, col.col)
-					sub[1..-1].each {|one| one.build builder, t }
+					builder.join t, sub[0]
+					sub[1..-1].each &it.build( builder, t)
 				end
 				self
 			end
 		end
+
+		# Takes to Queries.
+		# First Query will be a Subquery, second a regular query.
+		# Example:
+		#   Person.smql 'sub.articles:' => [{'limit:' => 1, 'order:': 'updated_at desc'}, {'content~' => 'some text'}]
+		# Person must have as last Article (compared by updated_at) owned by Person a Artive which has 'some text' in content.
+		# The last Article needn't to have 'some text' has content,  the subquery takes it anyway.
+		# But the second query compares to it and never to any other Article,  because these are filtered by first query.
+		# The difference to
+		#   Person.smql :articles => {'content~' => 'some text', 'limit:' => 1, 'order:': 'updated_at desc'}
+		# is,  second is not allowed (limit and order must be in root) and this means something like
+		#   "Person must have the Article owned by Person which has 'some text' in content.
+		#   limit and order has no function in this query and this article needn't to be the last."
+		class SubEqualJoin < EqualJoin
+			Operator = '()'
+			Expected = [lambda {|x| x.kind_of?( Array) and (1..2).include?( x.length) and x.all?( &it.kind_of?( Hash))}]
+
+			def initialize model, cols, val
+				super model, cols, val[1]
+				# sub: model, subquery, sub(condition)
+				@cols.each {|col, sub| sub[ 1...1] = SmqlToAR.new( col.relation, val[0]).parse }
+			end
+
+			def verify_column col
+				raise_unless col.child?, ConColumnError.new( [:Column], col)
+			end
+
+			def build builder, table
+				@cols.each do |col, sub|
+					t = table+col.to_a
+					p t: t, sub: sub
+					builder.sub_join t, col, *sub[0..1]
+					sub[2..-1].each &it.build( builder, t)
+				end
+				self
+			end
+		end
+
 		Equal = simple_condition Condition, '=', "%s = %s", [Array, String, Numeric]
 		Equal2 = simple_condition Equal, '', "%s = %s", [String, Numeric]
 		GreaterThan = simple_condition Condition, '>', "%s > %s", [Array, Numeric]
@@ -236,7 +273,7 @@ class SmqlToAR
 			Expected = [nil]
 
 			def verify_column col
-				raise NonExistingSelectableError.new( col)  unless col.exist_in? or SmqlToAR.model_of( col.last_model, col.col)
+				raise_unless col.exist_in? || SmqlToAR.model_of( col.last_model, col.col), NonExistingSelectableError.new( col)
 			end
 
 			def build builder, table
@@ -258,13 +295,14 @@ class SmqlToAR
 			Expected = [String, Array, Hash, Numeric, nil]
 
 			class Function
+				include SmqlToAR::Assertion
 				Name = nil
 				Expected = []
 				attr_reader :model, :func, :args
 
 				def self.try_parse model, func, args
 					SmqlToAR.logger.info( { try_parse: [func,args]}.inspect)
-					self.new model, func, args  if self::Name === func and self::Expected.any? {|e| e === args }
+					self.new model, func, args  if self::Name === func and self::Expected.any?( &it === args)
 				end
 
 				def initialize model, func, args
@@ -277,22 +315,19 @@ class SmqlToAR
 				Expected = [String, Array, Hash, nil]
 
 				def initialize model, func, args
-					SmqlToAR.logger.info( {args: args}.inspect)
 					args = case args
 						when String then [args]
 						when Array, Hash then args.to_a
 						when nil then nil
 						else raise 'Oops'
 						end
-					SmqlToAR.logger.info( {args: args}.inspect)
 					args.andand.collect! do |o|
 						o = Array.wrap o
 						col = Column.new model, o.first
 						o = 'desc' == o.last.to_s.downcase ? :DESC : :ASC
-						raise NonExistingColumnError.new( [:Column], col)  unless col.exist_in?
+						raise_unless col.exist_in?, NonExistingColumnError.new( [:Column], col)
 						[col, o]
 					end
-					SmqlToAR.logger.info( {args: args}.inspect)
 					super model, func, args
 				end
 
@@ -302,9 +337,29 @@ class SmqlToAR
 						col, o = o
 						col.joins builder, table
 						t = table + col.path
-						raise OnlyOrderOnBaseError.new( t)  unless 1 == t.length
+						raise_unless 1 == t.length, RootOnlyFunctionError.new( t)
 						builder.order t, col.col, o
 					end
+				end
+			end
+
+			class Limit < Function
+				Name = :limit
+				Expected = [Fixnum]
+
+				def build builder, table
+					raise_unless 1 == table.length, RootOnlyFunctionError.new( table)
+					builder.limit @args
+				end
+			end
+
+			class Offset < Function
+				Name = :offset
+				Expected = [Fixnum]
+
+				def build builder, table
+					raise_unless 1 == table.length, RootOnlyFunctionError.new( table)
+					builder.offset @args
 				end
 			end
 
@@ -315,9 +370,7 @@ class SmqlToAR
 					next  if [:Function, :Where, :Expected, :Operator].include? c
 					c = const_get c
 					next  if Function === c or not c.respond_to?( :try_parse)
-					SmqlToAR.logger.info( {f: c}.inspect)
 					r = c.try_parse model, col.first.to_sym, val
-					SmqlToAR.logger.info( {r: r}.inspect)
 					break  if r
 				end
 				r
