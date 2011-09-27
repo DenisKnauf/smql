@@ -250,7 +250,6 @@ class SmqlToAR
 			def build builder, table
 				@cols.each do |col, sub|
 					t = table+col.to_a
-					p t: t, sub: sub
 					builder.sub_join t, col, *sub[0..1]
 					sub[2..-1].each &it.build( builder, t)
 				end

@@ -79,24 +79,20 @@ class SmqlToAR
 		end
 
 		def sub_join table, col, model, query
-			pp [:sub_join, table, col. model, query]
 			prefix, base_table = "#{@prefix}_sub", col.col
-			join_ table, model, "(#{query.build( prefix, base_table).tap{|q| p :sub_join => q }.ar.to_sql})"
+			join_ table, model, "(#{query.build( prefix, base_table).ar.to_sql})"
 		end
 
 		def join_ table, model, query, pretable = nil
-			pp [:join_, table, model, query]
 			pretable ||= table[0...-1]
 			@table_model[ table] = model
 			premodel = @table_model[ pretable]
 			t = @table_alias[ table]
 			pt = quote_table_name @table_alias[ table[ 0...-1]]
-			pp premodel: premodel, table: table
 			refl = premodel.reflections[table.last]
 			case refl
 			when ActiveRecord::Reflection::ThroughReflection
 				through = refl.through_reflection
-				pp refl: refl
 				throughtable = table[0...-1]+[through.name.to_sym]
 				srctable = throughtable+[refl.source_reflection.name]
 				@table_model[ srctable] = model
