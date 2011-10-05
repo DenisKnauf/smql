@@ -29,30 +29,34 @@ class SmqlToAR
 		end
 
 		attr_reader :table_alias, :model, :table_model, :base_table, :_where, :_select, :_wobs, :_joins, :prefix, :_vid
-		attr_accessor :logger
+		attr_accessor :logger, :limit, :offset
 
-		def initialize model, prefix = nil, base_table
+		def initialize model, prefix = nil
 			@prefix = "smql"
 			@logger = SmqlToAR.logger
 			@table_alias = Hash.new do |h, k|
-				k = Array.wrap k
-				h[k] = "#{@prefix},#{k.join(',')}"
+				j = Array.wrap( k).compact
+				h[k] = h.key?(j) ? h[j] : "#{@prefix},#{j.join(',')}"
 			end
-			@_vid, @_where, @_wobs, @model, @quoter = 0, [], {}, model, model.connection
-			@base_table = base_table.blank? ? [model.table_name.to_sym] : Array.wrap( base_table)
+			@_vid, @_where, @_wobs, @model, @quoter = 0, SmqlToAR::And[], {}, model, model.connection
+			@base_table = [model.table_name.to_sym]
 			@table_alias[ @base_table] = @base_table.first
 			t = quote_table_name @table_alias[ @base_table]
-			@_select, @_joins, @_joined, @_includes, @_order = ["DISTINCT #{t}.*"], "", [], [], []
+			@_select, @_joins, @_joined, @_includes, @_order = ["DISTINCT #{t}.*"], "", [@base_table], [], []
 			@table_model = {@base_table => @model}
 		end
 
 		def vid()  Vid.new( @_vid+=1)  end
 
+		def inspect
+			"#<#{self.class.name}:#{"0x%x"% (self.object_id<<1)}|#{@prefix}:#{@base_table}:#{@model} vid=#{@_vid} where=#{@_where} wobs=#{@_wobs} select=#{@_select} aliases=#{@_table_alias}>"
+		end
+
 		# Jede via where uebergebene Condition wird geodert und alle zusammen werden geundet.
 		# "Konjunktive Normalform".  Allerdings duerfen Conditions auch Komplexe Abfragen enthalten.
-		# Ex: builder.where( 'a = a', 'b = c').where( 'c = d', 'e = e').where( 'x = y').where( '( m = n AND o = p )', 'f = g')
+		# Ex: builder.where( ['a = a', 'b = c']).where( ['c = d', 'e = e']).where( 'x = y').where( ['( m = n AND o = p )', 'f = g'])
 		#        #=> WHERE ( a = a OR b = c ) AND ( c = d OR e = e ) AND x = y ( ( m = n AND o = p ) OR f = g )
-		def where *cond
+		def where cond
 			@_where.push cond
 			self
 		end
@@ -75,12 +79,12 @@ class SmqlToAR
 		end
 
 		def build_join orig, pretable, table, prekey, key
-			" JOIN #{orig} AS #{quote_table_name table} ON #{column pretable, prekey} = #{column table, key} "
+			" LEFT OUTER JOIN #{orig} AS #{quote_table_name table} ON #{column pretable, prekey} = #{column table, key} "
 		end
 
-		def sub_join table, col, model, query
-			prefix, base_table = "#{@prefix}_sub", col.col
-			join_ table, model, "(#{query.build( prefix, base_table).ar.to_sql})"
+		def sub_joins table, col, model, query
+			prefix, base_table = "#{@prefix}_sub", col.relation.table_name
+			join_ table, model, "(#{query.build( prefix).ar.to_sql})"
 		end
 
 		def join_ table, model, query, pretable = nil
@@ -116,7 +120,8 @@ class SmqlToAR
 			self
 		end
 
-		def join table, model
+		def joins table, model
+			table = table.flatten.compact
 			return self  if @_joined.include? table # Already joined
 			join_ table, model, quote_table_name( model.table_name)
 			@_joined.push table
@@ -136,40 +141,22 @@ class SmqlToAR
 			@_order.push "#{column table, col} #{:DESC == o ? :DESC : :ASC}"
 		end
 
-		def limit count
-			@_limit = count
-		end
-
-		def offset count
-			@_offset = count
-		end
-
-		class Dummy
-			def method_missing m, *a, &e
-				#p :dummy => m, :pars => a, :block => e
-				self
-			end
-		end
-
 		def build_ar
-			where_str = @_where.collect do |w|
-				w = Array.wrap w
-				1 == w.length ? w.first : "( #{w.join( ' OR ')} )"
-			end.join ' AND '
+			where_str = @_where.type_correction!.optimize!.tap {|x| p x }.build_where
 			incls = {}
 			@_includes.each do |inc|
 				b = incls
 				inc[1..-1].collect {|rel| b = b[rel] ||= {} }
 			end
-			@logger.debug incls: incls, joins: @_joins
+			@logger.info where: where_str, wobs: @_wobs
 			@model = @model.
 				select( @_select.join( ', ')).
 				joins( @_joins).
 				where( where_str, @_wobs).
 				order( @_order.join( ', ')).
 				includes( incls)
-			@model = @model.limit @_limit  if @_limit
-			@model = @model.offset @_offset  if @_offset
+			@model = @model.limit @limit  if @limit
+			@model = @model.offset @offset  if @offset
 			@model
 		end
 
@@ -187,6 +174,75 @@ class SmqlToAR
 			build_ar
 			fix_calculate
 			@model
+		end
+	end
+
+	class SubBuilder < Array
+		attr_reader :parent, :_where
+		delegate :wobs, :joins, :includes, :sub_joins, :vid, :quote_column_name, :quoter, :quote_table_name, :column, :to => :parent
+
+		def initialize parent, tmp = false
+			p init: self, parent: parent
+			@parent = parent
+			@parent.where self  unless @parend.nil? && tmp
+		end
+
+		def new parent, tmp = false
+			super parent, tmp
+			#return parent  if self.class == parent.class
+			#super parent
+		end
+
+		alias where push
+
+		def type_correction!
+			collect! do |sub|
+				if sub.kind_of? Array
+					sub = default[ *sub]  unless sub.respond_to?( :type_correction!)
+					sub.type_correction!
+				end
+				sub
+			end
+			self
+		end
+
+		def optimize!
+			p optimize: self
+			ext = []
+			collect! do |sub|
+				sub = sub.optimize!  if sub.kind_of? Array
+				if self.class == sub.class
+					ext.push *sub
+					nil
+				elsif sub.blank?
+					nil
+				else
+					sub
+				end
+			end.compact!
+			p optimized: self
+			p ext: ext
+			push *ext
+			self
+		end
+
+		def inspect
+			"#{self.class.name.sub( /.*::/, '')}[ #{collect(&:inspect).join ', '}]"
+		end
+		def default()  SmqlToAR::And  end
+		def default_new( parent)  default.new self, parent, false  end
+	end
+
+	class And < SubBuilder
+		def default; SmqlToAR::Or; end
+		def build_where
+			join ' AND '
+		end
+	end
+
+	class Or < SubBuilder
+		def build_where
+			join ' OR '
 		end
 	end
 end

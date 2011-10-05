@@ -107,7 +107,9 @@ class SmqlToAR
 
 	# Model der Relation `rel` von `model`
 	def self.model_of model, rel
-		model.reflections[ rel.to_sym].andand.klass
+		rel = rel.to_sym
+		r = model.reflections[ rel].andand.klass
+		r.nil? && :self == rel ? model : r
 	end
 
 	# Eine Spalte in einer Tabelle, relativ zu `Column#model`.
@@ -121,7 +123,7 @@ class SmqlToAR
 		def initialize model, *col
 			@model = model
 			@last_model = nil
-			*@path, @col = Array.wrap( col).collect( &it.to_s.split( /[.\/]/)).flatten.collect( &:to_sym)
+			*@path, @col = *Array.wrap( col).collect( &it.to_s.split( /[.\/]/)).flatten.collect( &:to_sym).reject( &it==:self)
 		end
 
 		def last_model
@@ -131,9 +133,12 @@ class SmqlToAR
 		def each
 			model = @model
 			@path.each do |rel|
-				model = SmqlToAR.model_of model, rel
-				return false  unless model
-				yield rel, model
+				rel = rel.to_sym
+				unless :self == rel
+					model = SmqlToAR.model_of model, rel
+					return false  unless model
+					yield rel, model
+				end
 			end
 			model
 		end
@@ -158,20 +163,21 @@ class SmqlToAR
 		def joins builder = nil, table = nil, &exe
 			pp = []
 			table = Array.wrap table
-			exe ||= builder ? lambda {|j, m| builder.join table+j, m} : Array.method( :[])
+			exe ||= builder ? lambda {|j, m| builder.joins table+j, m} : Array.method( :[])
 			collect do |rel, model|
 				pp.push rel
 				exe.call pp, model
 			end
 	 	end
-		def length() @path.length+1  end
-		def size()   @path.size+1  end
-		def to_a()   @path+[@col]  end
+		def self?()  !@col  end
+		def length() @path.length+(self.self? ? 0 : 1)  end
+		def size()   @path.size+(self.self? ? 0 : 1)  end
+		def to_a()   @path+(self.self? ? [] : [@col])  end
 		def to_s()   to_a.join '.'  end
 		def to_sym() to_s.to_sym  end
 		def to_json()  to_s  end
 		def inspect()  "#<Column: #{model} #{to_s}>"  end
-		def relation()  SmqlToAR.model_of last_model, @col  end
+		def relation()  self.self? ? model : SmqlToAR.model_of( last_model, @col)  end
 		def allowed?()  ! self.protected?  end
 		def child?()  @path.empty? and !!relation  end
 	end
@@ -225,9 +231,9 @@ class SmqlToAR
 		self
 	end
 
-	def build prefix = nil, base_table = nil
+	def build prefix = nil
 		benchmark 'SMQL build query' do
-			@builder = QueryBuilder.new @model, prefix, base_table
+			@builder = QueryBuilder.new @model, prefix
 			table = @builder.base_table
 			@conditions.each &it.build( builder, table)
 		end
@@ -251,5 +257,13 @@ class SmqlToAR
 
 	def self.to_ar *params
 		new( *params).to_ar
+	end
+
+	def self.reload_library
+		lib_dir = File.dirname __FILE__
+		fj = lambda {|*a| File.join lib_dir, *a }
+		load fj.call( 'smql_to_ar.rb')
+		load fj.call( 'smql_to_ar', 'condition_types.rb')
+		load fj.call( 'smql_to_ar', 'query_builder.rb')
 	end
 end
