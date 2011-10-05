@@ -142,13 +142,12 @@ class SmqlToAR
 		end
 
 		def build_ar
-			where_str = @_where.type_correction!.optimize!.tap {|x| p x }.build_where
+			where_str = @_where.type_correction!.optimize!.build_where
 			incls = {}
 			@_includes.each do |inc|
 				b = incls
 				inc[1..-1].collect {|rel| b = b[rel] ||= {} }
 			end
-			@logger.info where: where_str, wobs: @_wobs
 			@model = @model.
 				select( @_select.join( ', ')).
 				joins( @_joins).
@@ -182,7 +181,6 @@ class SmqlToAR
 		delegate :wobs, :joins, :includes, :sub_joins, :vid, :quote_column_name, :quoter, :quote_table_name, :column, :to => :parent
 
 		def initialize parent, tmp = false
-			p init: self, parent: parent
 			@parent = parent
 			@parent.where self  unless @parend.nil? && tmp
 		end
@@ -207,7 +205,6 @@ class SmqlToAR
 		end
 
 		def optimize!
-			p optimize: self
 			ext = []
 			collect! do |sub|
 				sub = sub.optimize!  if sub.kind_of? Array
@@ -220,8 +217,6 @@ class SmqlToAR
 					sub
 				end
 			end.compact!
-			p optimized: self
-			p ext: ext
 			push *ext
 			self
 		end

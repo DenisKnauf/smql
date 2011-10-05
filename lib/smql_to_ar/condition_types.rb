@@ -229,7 +229,6 @@ class SmqlToAR
 				super( *pars)
 				@value = Array.wrap @value
 				cols = {}
-				p self: self, cols: @cols
 				@cols.each do |col|
 					col_model = col.relation
 					cols[col] = [col_model] + @value.collect {|val| ConditionTypes.try_parse( col_model, val) }
@@ -250,7 +249,6 @@ class SmqlToAR
 					b2 = 1 == sub.length ? builder : Or.new( builder)
 					sub.each {|i| i.collect( &it.build( And.new( b2), t)); p 'or' => b2 }
 				end
-				ap '=>' => builder
 				self
 			end
 		end
@@ -336,7 +334,6 @@ class SmqlToAR
 
 				class <<self
 					def try_parse model, func, args
-						SmqlToAR.logger.info( { try_parse: [func,args]}.inspect)
 						self.new model, func, args  if self::Name === func and self::Expected.any?( &it === args)
 					end
 
@@ -404,7 +401,6 @@ class SmqlToAR
 			end
 
 			def self.new model, col, val
-				SmqlToAR.logger.info( { function: col.first.to_sym }.inspect)
 				r = nil
 				constants.each do |c|
 					next  if [:Function, :Where, :Expected, :Operator].include? c
