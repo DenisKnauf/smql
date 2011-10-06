@@ -382,13 +382,70 @@ class SmqlToAR
 				end
 			end
 
+			class GroupBy < Function
+				Name = :group
+				Excepted = [String, Array]
+
+				def initialize model, func, args
+					super model, func, args.collect( &Columnt.method( :new))
+				end
+
+				def build builder, table
+					return  if @args.blank?
+					@args.each do |col|
+						t = Column.new *(table + col.to_a)
+						raise_unless 1 == t.length, RootOnlyFunctionError.new( t)
+						builder.group t
+					end
+				end
+			end
+
+			class Having < Function
+				Name = :having
+				Excepted = [Array]
+
+				def initialize model, func, args
+					args = Hash[ *args.collect do |col, meth|
+							col = Column.new col
+							case meth.to_sym
+							when :max, :min
+							else raise UnknownHavingMethod.new( [:max, :min], meth)
+							end
+							[col, meth]
+						end]
+					super model, func, args
+				end
+
+				def build builder, table
+					return  if @args.blank?
+					@args.each do |col, meth|
+						t = Column.new *(table + col.to_a)
+						raise_unless 1 == t.length, RootOnlyFunctionError.new( t)
+						builder.having meth => t
+					end
+				end
+			end
+
+			class Max < Having
+				Name = :max
+				Expected = [String]
+
+				def initialize model, func, args
+					super model, :having, Hash[ *args.collect {|col| [col, func] } ]
+				end
+			end
+
+			class Min < Max
+				Name = :min
+			end
+
 			class Limit < Function
 				Name = :limit
 				Expected = [Fixnum]
 
 				def build builder, table
 					raise_unless 1 == table.length, RootOnlyFunctionError.new( table)
-					builder.limit = Array.wrap(@args).first.to_i
+					builder.limit = Array.wrap( @args).first.to_i
 				end
 			end
 

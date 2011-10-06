@@ -101,6 +101,12 @@ class SmqlToAR
 		end
 	end
 
+	class UnknownHavingMethod < SMQLError
+		def initialize expected, got
+			super :expected => expected, :got => got
+		end
+	end
+
 	class BuilderError < Exception; end
 
 	#############################################################################
