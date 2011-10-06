@@ -248,7 +248,7 @@ class SmqlToAR
 					col.joins.each {|j, m| builder.joins table+j, m }
 					builder.joins t, model
 					b2 = 1 == sub.length ? builder : Or.new( builder)
-					sub.each {|i| i.collect( &it.build( And.new( b2), t)); p 'or' => b2 }
+					sub.each {|i| i.collect( &it.build( And.new( b2), t)) }
 				end
 				self
 			end
