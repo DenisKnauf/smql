@@ -159,12 +159,13 @@ class SmqlToAR
 						builder.where values.keys.collect {|vid| self.class::Where % [ col, vid.to_s ] }
 					end
 				else
+					b2 = SmqlToAR::And.new builder
 					values.keys.each do |vid|
-						builder.where @cols.collect {|col|
+						b2.where SmqlToAR::Or[ *@cols.collect {|col|
 								col.joins builder, table
 								col = builder.column table+col.path, col.col
 								self.class::Where % [ col, vid.to_s ]
-							}
+							}]
 					end
 				end
 				self
@@ -272,7 +273,7 @@ class SmqlToAR
 			def initialize model, cols, val
 				super model, cols, val[1]
 				# sub: model, subquery, sub(condition)
-				@cols.each {|col, sub| sub[ 1...1] = SmqlToAR.new( col.relation, val[0]).parse }
+				@cols.each {|col, sub| sub[ 1..-1] = SmqlToAR.new( col.relation, val[0]).parse, *sub[-1] }
 			end
 
 			def verify_column col
@@ -283,6 +284,7 @@ class SmqlToAR
 				@cols.each do |col, sub|
 					t = table+col.to_a
 					builder.sub_joins t, col, *sub[0..1]
+					#ap sub: sub[2..-1]
 					sub[2..-1].each &it.build( builder, t)
 				end
 				self
@@ -386,7 +388,7 @@ class SmqlToAR
 
 				def build builder, table
 					raise_unless 1 == table.length, RootOnlyFunctionError.new( table)
-					builder.limit @args
+					builder.limit = Array.wrap(@args).first.to_i
 				end
 			end
 
@@ -396,7 +398,7 @@ class SmqlToAR
 
 				def build builder, table
 					raise_unless 1 == table.length, RootOnlyFunctionError.new( table)
-					builder.offset @args
+					builder.offset = Array.wrap(@args).first.to_i
 				end
 			end
 

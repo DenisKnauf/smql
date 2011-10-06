@@ -79,7 +79,7 @@ class SmqlToAR
 		end
 
 		def build_join orig, pretable, table, prekey, key
-			" LEFT OUTER JOIN #{orig} AS #{quote_table_name table} ON #{column pretable, prekey} = #{column table, key} "
+			" LEFT JOIN #{orig} AS #{quote_table_name table} ON #{column pretable, prekey} = #{column table, key} "
 		end
 
 		def sub_joins table, col, model, query
@@ -226,18 +226,21 @@ class SmqlToAR
 		end
 		def default()  SmqlToAR::And  end
 		def default_new( parent)  default.new self, parent, false  end
+		def collect_build_where
+			collect {|x| x.respond_to?( :build_where) ? x.build_where : x.to_s }
+		end
 	end
 
 	class And < SubBuilder
 		def default; SmqlToAR::Or; end
 		def build_where
-			join ' AND '
+			collect_build_where.join ' AND '
 		end
 	end
 
 	class Or < SubBuilder
 		def build_where
-			join ' OR '
+			collect_build_where.join ' OR '
 		end
 	end
 end
