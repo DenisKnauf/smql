@@ -43,7 +43,6 @@ class SmqlToAR
 			@table_alias[ @base_table] = @base_table.first
 			t = quote_table_name @table_alias[ @base_table]
 			@_select, @_joins, @_joined, @_includes, @_order = ["DISTINCT #{t}.*"], "", [@base_table], [], []
-			@_group, @_having = {}, {}
 			@table_model = {@base_table => @model}
 		end
 
@@ -65,14 +64,6 @@ class SmqlToAR
 		def wobs vals
 			@_wobs.update vals
 			self
-		end
-
-		def group col
-			@_group.push col
-		end
-
-		def having h
-			@_having.update h
 		end
 
 		def quote_column_name name
@@ -114,7 +105,7 @@ class SmqlToAR
 				join_ srctable, refl.klass, query, throughtable
 			when ActiveRecord::Reflection::AssociationReflection
 				case refl.macro
-				when :has_many
+				when :has_many, :has_one
 					@_joins += build_join query, pretable, t, premodel.primary_key, refl.primary_key_name
 				when :belongs_to
 					@_joins += build_join query, pretable, t, refl.primary_key_name, premodel.primary_key

@@ -248,7 +248,7 @@ class SmqlToAR
 					col.joins.each {|j, m| builder.joins table+j, m }
 					builder.joins t, model
 					b2 = 1 == sub.length ? builder : Or.new( builder)
-					sub.each {|i| i.collect( &it.build( And.new( b2), t)) }
+					sub.each {|i| i.collect( &it.build( And.new( b2), t)); p 'or' => b2 }
 				end
 				self
 			end
@@ -266,6 +266,7 @@ class SmqlToAR
 		# is,  second is not allowed (limit and order must be in root) and this means something like
 		#   "Person must have the Article owned by Person which has 'some text' in content.
 		#   limit and order has no function in this query and this article needn't to be the last."
+=begin
 		class SubEqualJoin < EqualJoin
 			Operator = '()'
 			Expected = [lambda {|x| x.kind_of?( Array) and (1..2).include?( x.length) and x.all?( &it.kind_of?( Hash))}]
@@ -290,6 +291,7 @@ class SmqlToAR
 				self
 			end
 		end
+=end
 
 		Equal = simple_condition Condition, '=', "%s = %s", [Array, String, Numeric]
 		Equal2 = simple_condition Equal, '', "%s = %s", [String, Numeric]
@@ -297,8 +299,8 @@ class SmqlToAR
 		LesserThan = simple_condition Condition, '<', "%s < %s", [Array, Numeric]
 		NotIlike = simple_condition Condition, '!~', "%s NOT ILIKE %s", [Array, String]
 		Ilike = simple_condition Condition, '~', "%s ILIKE %s", [Array, String]
-		Exists = simple_condition Condition, '', '%s IS NOT NULL', [true]
-		NotExists = simple_condition Condition, '', '%s IS NULL', [false]
+		Exists = simple_condition Condition, '', '%s IS NOT NULL', [TrueClass]
+		NotExists = simple_condition Condition, '', '%s IS NULL', [FalseClass]
 
 		Join = simple_condition EqualJoin, '', nil, [Hash]
 		InRange2 = simple_condition InRange, '', nil, [Range]
@@ -382,70 +384,13 @@ class SmqlToAR
 				end
 			end
 
-			class GroupBy < Function
-				Name = :group
-				Excepted = [String, Array]
-
-				def initialize model, func, args
-					super model, func, args.collect( &Columnt.method( :new))
-				end
-
-				def build builder, table
-					return  if @args.blank?
-					@args.each do |col|
-						t = Column.new *(table + col.to_a)
-						raise_unless 1 == t.length, RootOnlyFunctionError.new( t)
-						builder.group t
-					end
-				end
-			end
-
-			class Having < Function
-				Name = :having
-				Excepted = [Array]
-
-				def initialize model, func, args
-					args = Hash[ *args.collect do |col, meth|
-							col = Column.new col
-							case meth.to_sym
-							when :max, :min
-							else raise UnknownHavingMethod.new( [:max, :min], meth)
-							end
-							[col, meth]
-						end]
-					super model, func, args
-				end
-
-				def build builder, table
-					return  if @args.blank?
-					@args.each do |col, meth|
-						t = Column.new *(table + col.to_a)
-						raise_unless 1 == t.length, RootOnlyFunctionError.new( t)
-						builder.having meth => t
-					end
-				end
-			end
-
-			class Max < Having
-				Name = :max
-				Expected = [String]
-
-				def initialize model, func, args
-					super model, :having, Hash[ *args.collect {|col| [col, func] } ]
-				end
-			end
-
-			class Min < Max
-				Name = :min
-			end
-
 			class Limit < Function
 				Name = :limit
 				Expected = [Fixnum]
 
 				def build builder, table
 					raise_unless 1 == table.length, RootOnlyFunctionError.new( table)
-					builder.limit = Array.wrap( @args).first.to_i
+					builder.limit = Array.wrap(@args).first.to_i
 				end
 			end
 
