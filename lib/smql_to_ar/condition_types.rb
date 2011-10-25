@@ -302,7 +302,7 @@ class SmqlToAR
 						col, o = o
 						col.joins builder, table
 						t = table + col.path
-						raise OnlyOrderOnBaseError.new( t)  unless 1 == t.length
+						#raise OnlyOrderOnBaseError.new( t)  unless 1 == t.length
 						builder.order t, col.col, o
 					end
 				end
