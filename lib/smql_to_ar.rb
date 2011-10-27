@@ -180,35 +180,35 @@ class SmqlToAR
 	end
 
 	def parse
-		benchmark 'SMQL parse' do
+		#benchmark 'SMQL parse' do
 			@conditions = ConditionTypes.try_parse @model, @query
-		end
+		#end
 		#p conditions: @conditions
 		self
 	end
 
 	def build
-		benchmark 'SMQL build query' do
+		#benchmark 'SMQL build query' do
 			@builder = QueryBuilder.new @model
 			table = @builder.base_table
 			@conditions.each {|condition| condition.build builder, table }
-		end
+		#end
 		#p builder: @builder
 		self
 	end
 
 	def ar
-		@ar ||= benchmark 'SMQL ar' do
+		@ar ||= #benchmark 'SMQL ar' do
 			@builder.to_ar
-		end
+		#end
 	end
 
 	def to_ar
-		benchmark 'SMQL' do
+		#benchmark 'SMQL' do
 			parse
 			build
 			ar
-		end
+		#end
 	end
 
 	def self.to_ar *params

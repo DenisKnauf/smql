@@ -111,7 +111,7 @@ class SmqlToAR
 		end
 
 		def order table, col, o
-			tc = column table, col
+			ct = column table, col
 			@_select.push ct
 			@_order.push "#{ct} #{:DESC == o ? :DESC : :ASC}"
 			self

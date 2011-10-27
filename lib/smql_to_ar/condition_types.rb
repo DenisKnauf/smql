@@ -213,7 +213,7 @@ class SmqlToAR
 				@cols.each do |col, sub|
 					t = table + col.path + [col.col]
 					#p sub: sub
-					p col: col, joins: col.joins
+					#p col: col, joins: col.joins
 					col.joins.each {|j, m| builder.join table+j, m }
 					builder.join t, SmqlToAR.model_of( col.last_model, col.col)
 					sub[1..-1].each {|one| one.build builder, t }
@@ -263,7 +263,7 @@ class SmqlToAR
 				attr_reader :model, :func, :args
 
 				def self.try_parse model, func, args
-					SmqlToAR.logger.info( { try_parse: [func,args]}.inspect)
+					#SmqlToAR.logger.info( { try_parse: [func,args]}.inspect)
 					self.new model, func, args  if self::Name === func and self::Expected.any? {|e| e === args }
 				end
 
@@ -277,14 +277,14 @@ class SmqlToAR
 				Expected = [String, Array, Hash, nil]
 
 				def initialize model, func, args
-					SmqlToAR.logger.info( {args: args}.inspect)
+					#SmqlToAR.logger.info( {args: args}.inspect)
 					args = case args
 						when String then [args]
 						when Array, Hash then args.to_a
 						when nil then nil
 						else raise 'Oops'
 						end
-					SmqlToAR.logger.info( {args: args}.inspect)
+					#SmqlToAR.logger.info( {args: args}.inspect)
 					args.andand.collect! do |o|
 						o = Array.wrap o
 						col = Column.new model, o.first
@@ -292,7 +292,7 @@ class SmqlToAR
 						raise NonExistingColumnError.new( [:Column], col)  unless col.exist_in?
 						[col, o]
 					end
-					SmqlToAR.logger.info( {args: args}.inspect)
+					#SmqlToAR.logger.info( {args: args}.inspect)
 					super model, func, args
 				end
 
@@ -309,15 +309,15 @@ class SmqlToAR
 			end
 
 			def self.new model, col, val
-				SmqlToAR.logger.info( { function: col.first.to_sym }.inspect)
+				#SmqlToAR.logger.info( { function: col.first.to_sym }.inspect)
 				r = nil
 				constants.each do |c|
 					next  if [:Function, :Where, :Expected, :Operator].include? c
 					c = const_get c
 					next  if Function === c or not c.respond_to?( :try_parse)
-					SmqlToAR.logger.info( {f: c}.inspect)
+					#SmqlToAR.logger.info( {f: c}.inspect)
 					r = c.try_parse model, col.first.to_sym, val
-					SmqlToAR.logger.info( {r: r}.inspect)
+					#SmqlToAR.logger.info( {r: r}.inspect)
 					break  if r
 				end
 				r
