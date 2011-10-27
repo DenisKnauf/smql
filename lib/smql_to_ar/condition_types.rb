@@ -25,10 +25,29 @@ class SmqlToAR
 	# Nimmt eine Klasse ein Objekt an,  so soll diese Klasse instanziert werden.
 	# Alles weitere siehe Condition.
 	module ConditionTypes
+		extend SmqlToAR::Assertion
+
 		class <<self
 			# Ex: 'givenname|surname|nick' => [:givenname, :surname, :nick]
 			def split_keys k
 				k.split( '|').collect &:to_sym
+			end
+
+			def conditions &e
+				unless block_given?
+					r = Enumerator.new( self, :conditions)
+					s = self
+					r.define_singleton_method :[] do |k|
+						s.conditions.select {|c| c::Operator === k }
+					end
+					return r
+				end
+				constants.each do |c|
+					next  if :Condition == c
+					c = const_get c
+					next  if Condition === c
+					yield c
+				end
 			end
 
 			# Eine Regel parsen.
@@ -36,17 +55,14 @@ class SmqlToAR
 			def try_parse_it model, colop, val
 				r = nil
 				#p :try_parse => { :model => model, :colop => colop, :value => val }
-				constants.each do |c|
-					next  if :Condition == c
-					c = const_get c
-					next  if Condition === c
-					raise UnexpectedColOpError.new( model, colop, val)  unless colop =~ /^(?:\d*:)?(.*?)(\W*)$/
+				conditions.each do |c|
+					raise_unless colop =~ /^(?:\d*:)?(.*?)(\W*)$/, UnexpectedColOpError.new( model, colop, val)
 					col, op = $1, $2
 					col = split_keys( col).collect {|c| Column.new model, c }
 					r = c.try_parse model, col, op, val
 					break  if r
 				end
-				raise UnexpectedError.new( model, colop, val)  unless r
+				raise_unless r, UnexpectedError.new( model, colop, val)
 				r
 			end
 
@@ -72,16 +88,24 @@ class SmqlToAR
 		end
 
 		class Condition
+			include SmqlToAR::Assertion
+			extend SmqlToAR::Assertion
 			attr_reader :value, :cols
 			Operator = nil
 			Expected = []
 			Where = nil
 
-			# Versuche das Objekt zu erkennen.  Operator und Expected muessen passen.
-			# Passt das Object,  die Klasse instanzieren.
-			def self.try_parse model, cols, op, val
-				#p :self => name, :try_parse => op, :cols => cols, :with => self::Operator, :value => val, :expected => self::Expected, :model => model.name
-				new model, cols, val  if self::Operator === op and self::Expected.any? {|i| i === val }
+			class <<self
+				# Versuche das Objekt zu erkennen.  Operator und Expected muessen passen.
+				# Passt das Object,  die Klasse instanzieren.
+				def try_parse model, cols, op, val
+					#p :self => name, :try_parse => op, :cols => cols, :with => self::Operator, :value => val, :expected => self::Expected, :model => model.name
+					new model, cols, val  if self::Operator === op and self::Expected.any?( &it === val)
+				end
+
+				def inspect
+					"#{self.name}(:operator=>#{self::Operator.inspect}, :expected=>#{self::Expected.inspect}, :where=>#{self::Where.inspect})"
+				end
 			end
 
 			def initialize model, cols, val
@@ -91,6 +115,10 @@ class SmqlToAR
 					else Array.wrap val
 					end
 				verify
+			end
+
+			def inspect
+				"#<#{self.class.name}:0x#{(self.object_id<<1).to_s 16} model: #{self.class.name}, cols: #{@cols.inspect}, value: #{@value.inspect}>"
 			end
 
 			def verify
@@ -103,19 +131,19 @@ class SmqlToAR
 			# Gibt es eine Spalte diesen Namens?
 			# Oder:  Gibt es eine Relation diesen Namens?  (Hier nicht der Fall)
 			def verify_column col
-				raise NonExistingColumnError.new( %w[Column], col)  unless col.exist_in?
+				raise_unless col.exist_in?, NonExistingColumnError.new( %w[Column], col)
 			end
 
 			# Modelle koennen Spalten/Relationen verbieten mit Model#smql_protected.
 			# Dieses muss ein Object mit #include?( name_als_string) zurueckliefern,
 			# welches true fuer verboten und false fuer, erlaubt steht.
 			def verify_allowed col
-				raise ProtectedColumnError.new( col)  if col.protected?
+				raise_if col.protected?, ProtectedColumnError.new( col)
 			end
 
 			# Erstelle alle noetigen Klauseln. builder nimmt diese entgegen,
-			# wobei builder.join, builder.select, builder.where und builder.wobs von interesse sind.
-			# mehrere Schluessel bedeuten, dass die Values _alle_ zutreffen muessen, wobei die Schluessel geodert werden.
+			# wobei builder.joins, builder.select, builder.where und builder.wobs von interesse sind.
+			# mehrere Schluessel bedeuten, dass die Values _alle_ zutreffen muessen, wobei die Schluessel geODERt werden.
 			# Ex:
 			# 1) {"givenname=", "Peter"} #=> givenname = 'Peter'
 			# 2) {"givenname=", ["Peter", "Hans"]} #=> ( givenname = 'Peter' OR givenname = 'Hans' )
@@ -128,15 +156,16 @@ class SmqlToAR
 					@cols.each do |col|
 						col.joins builder, table
 						col = builder.column table+col.path, col.col
-						builder.where *values.keys.collect {|vid| self.class::Where % [ col, vid.to_s ] }
+						builder.where values.keys.collect {|vid| self.class::Where % [ col, vid.to_s ] }
 					end
 				else
+					b2 = SmqlToAR::And.new builder
 					values.keys.each do |vid|
-						builder.where *@cols.collect {|col|
+						b2.where SmqlToAR::Or[ *@cols.collect {|col|
 								col.joins builder, table
 								col = builder.column table+col.path, col.col
 								self.class::Where % [ col, vid.to_s ]
-							}
+							}]
 					end
 				end
 				self
@@ -185,50 +214,94 @@ class SmqlToAR
 
 		In = simple_condition NotIn, '|=', '%s IN (%s)', [Array]
 		In2 = simple_condition In, '', nil, [Array]
-		NotEqual = simple_condition Condition, /\!=|<>/, "%s <> %s", [Array, String, Numeric]
+		NotEqual = simple_condition Condition, '!=', "%s <> %s", [Array, String, Numeric]
+		NotEqual2 = simple_condition Condition, '<>', "%s <> %s", [Array, String, Numeric]
 		GreaterThanOrEqual = simple_condition Condition, '>=', "%s >= %s", [Array, Numeric]
 		LesserThanOrEqual = simple_condition Condition, '<=', "%s <= %s", [Array, Numeric]
+
+		# Examples:
+		# { 'articles=>' => { id: 1 } }
+		# { 'articles=>' => [ { id: 1 }, { id: 2 } ] }
 		class EqualJoin <Condition
-			Operator = '='
-			Expected = [Hash]
+			Operator = '=>'
+			Expected = [Hash, lambda {|x| x.kind_of?( Array) and x.all?( &it.kind_of?( Hash))}]
 
 			def initialize *pars
 				super( *pars)
+				@value = Array.wrap @value
 				cols = {}
 				@cols.each do |col|
-					col_model = SmqlToAR.model_of col.last_model, col.col
-					#p col_model: col_model.to_s, value: @value
-					cols[col] = [col_model] + ConditionTypes.try_parse( col_model, @value)
+					col_model = col.relation
+					cols[col] = [col_model] + @value.collect {|val| ConditionTypes.try_parse( col_model, val) }
 				end
 				@cols = cols
 			end
 
 			def verify_column col
-				refl = SmqlToAR.model_of col.last_model, col.col
-				#p refl: refl, model: @model.name, col: col, :reflections => @model.reflections.keys
-				raise NonExistingRelationError.new( %w[Relation], col)  unless refl
+				raise_unless col.relation, NonExistingRelationError.new( %w[Relation], col)
 			end
 
 			def build builder, table
 				@cols.each do |col, sub|
+					model, *sub = sub
 					t = table + col.path + [col.col]
-					#p sub: sub
-					#p col: col, joins: col.joins
-					col.joins.each {|j, m| builder.join table+j, m }
-					builder.join t, SmqlToAR.model_of( col.last_model, col.col)
-					sub[1..-1].each {|one| one.build builder, t }
+					col.joins.each {|j, m| builder.joins table+j, m }
+					builder.joins t, model
+					b2 = 1 == sub.length ? builder : Or.new( builder)
+					sub.each {|i| i.collect( &it.build( And.new( b2), t)); p 'or' => b2 }
 				end
 				self
 			end
 		end
+
+		# Takes to Queries.
+		# First Query will be a Subquery, second a regular query.
+		# Example:
+		#   Person.smql 'sub.articles:' => [{'limit:' => 1, 'order:': 'updated_at desc'}, {'content~' => 'some text'}]
+		# Person must have as last Article (compared by updated_at) owned by Person a Artive which has 'some text' in content.
+		# The last Article needn't to have 'some text' has content,  the subquery takes it anyway.
+		# But the second query compares to it and never to any other Article,  because these are filtered by first query.
+		# The difference to
+		#   Person.smql :articles => {'content~' => 'some text', 'limit:' => 1, 'order:': 'updated_at desc'}
+		# is,  second is not allowed (limit and order must be in root) and this means something like
+		#   "Person must have the Article owned by Person which has 'some text' in content.
+		#   limit and order has no function in this query and this article needn't to be the last."
+=begin
+		class SubEqualJoin < EqualJoin
+			Operator = '()'
+			Expected = [lambda {|x| x.kind_of?( Array) and (1..2).include?( x.length) and x.all?( &it.kind_of?( Hash))}]
+
+			def initialize model, cols, val
+				super model, cols, val[1]
+				# sub: model, subquery, sub(condition)
+				@cols.each {|col, sub| sub[ 1..-1] = SmqlToAR.new( col.relation, val[0]).parse, *sub[-1] }
+			end
+
+			def verify_column col
+				raise_unless col.child?, ConColumnError.new( [:Column], col)
+			end
+
+			def build builder, table
+				@cols.each do |col, sub|
+					t = table+col.to_a
+					builder.sub_joins t, col, *sub[0..1]
+					#ap sub: sub[2..-1]
+					sub[2..-1].each &it.build( builder, t)
+				end
+				self
+			end
+		end
+=end
+
 		Equal = simple_condition Condition, '=', "%s = %s", [Array, String, Numeric]
 		Equal2 = simple_condition Equal, '', "%s = %s", [String, Numeric]
 		GreaterThan = simple_condition Condition, '>', "%s > %s", [Array, Numeric]
 		LesserThan = simple_condition Condition, '<', "%s < %s", [Array, Numeric]
 		NotIlike = simple_condition Condition, '!~', "%s NOT ILIKE %s", [Array, String]
 		Ilike = simple_condition Condition, '~', "%s ILIKE %s", [Array, String]
+		Exists = simple_condition Condition, '', '%s IS NOT NULL', [TrueClass]
+		NotExists = simple_condition Condition, '', '%s IS NULL', [FalseClass]
 
-		####### No Operator #######
 		Join = simple_condition EqualJoin, '', nil, [Hash]
 		InRange2 = simple_condition InRange, '', nil, [Range]
 		class Select < Condition
@@ -236,7 +309,7 @@ class SmqlToAR
 			Expected = [nil]
 
 			def verify_column col
-				raise NonExistingSelectableError.new( col)  unless col.exist_in? or SmqlToAR.model_of( col.last_model, col.col)
+				raise_unless col.exist_in? || SmqlToAR.model_of( col.last_model, col.col), NonExistingSelectableError.new( col)
 			end
 
 			def build builder, table
@@ -258,13 +331,19 @@ class SmqlToAR
 			Expected = [String, Array, Hash, Numeric, nil]
 
 			class Function
+				include SmqlToAR::Assertion
 				Name = nil
 				Expected = []
 				attr_reader :model, :func, :args
 
-				def self.try_parse model, func, args
-					#SmqlToAR.logger.info( { try_parse: [func,args]}.inspect)
-					self.new model, func, args  if self::Name === func and self::Expected.any? {|e| e === args }
+				class <<self
+					def try_parse model, func, args
+						self.new model, func, args  if self::Name === func and self::Expected.any?( &it === args)
+					end
+
+					def inspect
+						"#{self.name}(:name=>#{self::Name}, :expected=>#{self::Expected})"
+					end
 				end
 
 				def initialize model, func, args
@@ -277,22 +356,19 @@ class SmqlToAR
 				Expected = [String, Array, Hash, nil]
 
 				def initialize model, func, args
-					#SmqlToAR.logger.info( {args: args}.inspect)
 					args = case args
 						when String then [args]
 						when Array, Hash then args.to_a
 						when nil then nil
 						else raise 'Oops'
 						end
-					#SmqlToAR.logger.info( {args: args}.inspect)
 					args.andand.collect! do |o|
 						o = Array.wrap o
 						col = Column.new model, o.first
 						o = 'desc' == o.last.to_s.downcase ? :DESC : :ASC
-						raise NonExistingColumnError.new( [:Column], col)  unless col.exist_in?
+						raise_unless col.exist_in?, NonExistingColumnError.new( [:Column], col)
 						[col, o]
 					end
-					#SmqlToAR.logger.info( {args: args}.inspect)
 					super model, func, args
 				end
 
@@ -302,22 +378,39 @@ class SmqlToAR
 						col, o = o
 						col.joins builder, table
 						t = table + col.path
-						#raise OnlyOrderOnBaseError.new( t)  unless 1 == t.length
+						#raise_unless 1 == t.length, RootOnlyFunctionError.new( t)
 						builder.order t, col.col, o
 					end
 				end
 			end
 
+			class Limit < Function
+				Name = :limit
+				Expected = [Fixnum]
+
+				def build builder, table
+					raise_unless 1 == table.length, RootOnlyFunctionError.new( table)
+					builder.limit = Array.wrap(@args).first.to_i
+				end
+			end
+
+			class Offset < Function
+				Name = :offset
+				Expected = [Fixnum]
+
+				def build builder, table
+					raise_unless 1 == table.length, RootOnlyFunctionError.new( table)
+					builder.offset = Array.wrap(@args).first.to_i
+				end
+			end
+
 			def self.new model, col, val
-				#SmqlToAR.logger.info( { function: col.first.to_sym }.inspect)
 				r = nil
 				constants.each do |c|
 					next  if [:Function, :Where, :Expected, :Operator].include? c
 					c = const_get c
 					next  if Function === c or not c.respond_to?( :try_parse)
-					#SmqlToAR.logger.info( {f: c}.inspect)
 					r = c.try_parse model, col.first.to_sym, val
-					#SmqlToAR.logger.info( {r: r}.inspect)
 					break  if r
 				end
 				r

@@ -22,36 +22,41 @@ class SmqlToAR
 		class Vid
 			attr_reader :vid
 			def initialize( vid)  @vid = vid  end
-			def to_s() ":c#{@vid}" end
-			def to_sym() "c#{@vid}".to_sym end
+			def to_s() ":smql_c#{@vid}" end
+			def to_sym() "smql_c#{@vid}".to_sym end
 			alias sym to_sym
 			def to_i()  @vid  end
 		end
 
-		attr_reader :table_alias, :model, :table_model, :base_table, :_where, :_select, :_wobs, :_joins
-		attr_accessor :logger
+		attr_reader :table_alias, :model, :table_model, :base_table, :_where, :_select, :_wobs, :_joins, :prefix, :_vid
+		attr_accessor :logger, :limit, :offset
 
-		def initialize model
+		def initialize model, prefix = nil
+			@prefix = "smql"
 			@logger = SmqlToAR.logger
 			@table_alias = Hash.new do |h, k|
-				k = Array.wrap k
-				h[k] = "smql,#{k.join(',')}"
+				j = Array.wrap( k).compact
+				h[k] = h.key?(j) ? h[j] : "#{@prefix},#{j.join(',')}"
 			end
-			@_vid, @_where, @_wobs, @model, @quoter = 0, [], {}, model, model.connection
+			@_vid, @_where, @_wobs, @model, @quoter = 0, SmqlToAR::And[], {}, model, model.connection
 			@base_table = [model.table_name.to_sym]
 			@table_alias[ @base_table] = @base_table.first
 			t = quote_table_name @table_alias[ @base_table]
-			@_select, @_joins, @_joined, @_includes, @_order = ["DISTINCT #{t}.*"], "", [], [], []
+			@_select, @_joins, @_joined, @_includes, @_order = ["DISTINCT #{t}.*"], "", [@base_table], [], []
 			@table_model = {@base_table => @model}
 		end
 
 		def vid()  Vid.new( @_vid+=1)  end
 
+		def inspect
+			"#<#{self.class.name}:#{"0x%x"% (self.object_id<<1)}|#{@prefix}:#{@base_table}:#{@model} vid=#{@_vid} where=#{@_where} wobs=#{@_wobs} select=#{@_select} aliases=#{@_table_alias}>"
+		end
+
 		# Jede via where uebergebene Condition wird geodert und alle zusammen werden geundet.
 		# "Konjunktive Normalform".  Allerdings duerfen Conditions auch Komplexe Abfragen enthalten.
-		# Ex: builder.where( 'a = a', 'b = c').where( 'c = d', 'e = e').where( 'x = y').where( '( m = n AND o = p )', 'f = g')
+		# Ex: builder.where( ['a = a', 'b = c']).where( ['c = d', 'e = e']).where( 'x = y').where( ['( m = n AND o = p )', 'f = g'])
 		#        #=> WHERE ( a = a OR b = c ) AND ( c = d OR e = e ) AND x = y ( ( m = n AND o = p ) OR f = g )
-		def where *cond
+		def where cond
 			@_where.push cond
 			self
 		end
@@ -74,30 +79,52 @@ class SmqlToAR
 		end
 
 		def build_join orig, pretable, table, prekey, key
-			" JOIN #{quote_table_name orig.to_sym} AS #{quote_table_name table} ON #{column pretable, prekey} = #{column table, key} "
+			" LEFT JOIN #{orig} AS #{quote_table_name table} ON #{column pretable, prekey} = #{column table, key} "
 		end
 
-		def join table, model
-			return self  if @_joined.include? table # Already joined
-			pretable = table[0...-1]
+		def sub_joins table, col, model, query
+			prefix, base_table = "#{@prefix}_sub", col.relation.table_name
+			join_ table, model, "(#{query.build( prefix).ar.to_sql})"
+		end
+
+		def join_ table, model, query, pretable = nil
+			pretable ||= table[0...-1]
 			@table_model[ table] = model
 			premodel = @table_model[ pretable]
 			t = @table_alias[ table]
 			pt = quote_table_name @table_alias[ table[ 0...-1]]
 			refl = premodel.reflections[table.last]
-			case refl.macro
-			when :has_many
-				@_joins += build_join model.table_name, pretable, t, premodel.primary_key, refl.primary_key_name
-			when :belongs_to
-				@_joins += build_join model.table_name, pretable, t, refl.primary_key_name, premodel.primary_key
-			when :has_and_belongs_to_many
-				jointable = [','] + table
-				@_joins += build_join refl.options[:join_table], pretable, @table_alias[jointable], premodel.primary_key, refl.primary_key_name
-				@_joins += build_join model.table_name, jointable, t, refl.association_foreign_key, refl.association_primary_key
-			else raise BuilderError, "Unkown reflection macro: #{refl.macro.inspect}"
+			case refl
+			when ActiveRecord::Reflection::ThroughReflection
+				through = refl.through_reflection
+				throughtable = table[0...-1]+[through.name.to_sym]
+				srctable = throughtable+[refl.source_reflection.name]
+				@table_model[ srctable] = model
+				@table_alias[ table] = @table_alias[ srctable]
+				join_ throughtable, through.klass, quote_table_name( through.table_name)
+				join_ srctable, refl.klass, query, throughtable
+			when ActiveRecord::Reflection::AssociationReflection
+				case refl.macro
+				when :has_many, :has_one
+					@_joins += build_join query, pretable, t, premodel.primary_key, refl.primary_key_name
+				when :belongs_to
+					@_joins += build_join query, pretable, t, refl.primary_key_name, premodel.primary_key
+				when :has_and_belongs_to_many
+					jointable = [','] + table
+					@_joins += build_join refl.options[:join_table], pretable, @table_alias[jointable], premodel.primary_key, refl.primary_key_name
+					@_joins += build_join query, jointable, t, refl.association_foreign_key, refl.association_primary_key
+				else raise BuilderError, "Unkown reflection macro: #{refl.macro.inspect}"
+				end
+			else raise BuilderError, "Unkown reflection type: #{refl.class.name}"
 			end
-			@_joined.push table
 			self
+		end
+
+		def joins table, model
+			table = table.flatten.compact
+			return self  if @_joined.include? table # Already joined
+			join_ table, model, quote_table_name( model.table_name)
+			@_joined.push table
 		end
 
 		def includes table
@@ -117,30 +144,22 @@ class SmqlToAR
 			self
 		end
 
-		class Dummy
-			def method_missing m, *a, &e
-				#p :dummy => m, :pars => a, :block => e
-				self
-			end
-		end
-
 		def build_ar
-			where_str = @_where.collect do |w|
-				w = Array.wrap w
-				1 == w.length ? w.first : "( #{w.join( ' OR ')} )"
-			end.join ' AND '
+			where_str = @_where.type_correction!.optimize!.build_where
 			incls = {}
 			@_includes.each do |inc|
 				b = incls
 				inc[1..-1].collect {|rel| b = b[rel] ||= {} }
 			end
-			@logger.debug incls: incls, joins: @_joins
 			@model = @model.
 				select( @_select.join( ', ')).
 				joins( @_joins).
 				where( where_str, @_wobs).
 				order( @_order.join( ', ')).
 				includes( incls)
+			@model = @model.limit @limit  if @limit
+			@model = @model.offset @offset  if @offset
+			@model
 		end
 
 		def fix_calculate
@@ -157,6 +176,74 @@ class SmqlToAR
 			build_ar
 			fix_calculate
 			@model
+		end
+	end
+
+	class SubBuilder < Array
+		attr_reader :parent, :_where
+		delegate :wobs, :joins, :includes, :sub_joins, :vid, :quote_column_name, :quoter, :quote_table_name, :column, :to => :parent
+
+		def initialize parent, tmp = false
+			@parent = parent
+			@parent.where self  unless @parend.nil? && tmp
+		end
+
+		def new parent, tmp = false
+			super parent, tmp
+			#return parent  if self.class == parent.class
+			#super parent
+		end
+
+		alias where push
+
+		def type_correction!
+			collect! do |sub|
+				if sub.kind_of? Array
+					sub = default[ *sub]  unless sub.respond_to?( :type_correction!)
+					sub.type_correction!
+				end
+				sub
+			end
+			self
+		end
+
+		def optimize!
+			ext = []
+			collect! do |sub|
+				sub = sub.optimize!  if sub.kind_of? Array
+				if self.class == sub.class
+					ext.push *sub
+					nil
+				elsif sub.blank?
+					nil
+				else
+					sub
+				end
+			end.compact!
+			push *ext
+			self
+		end
+
+		def inspect
+			"#{self.class.name.sub( /.*::/, '')}[ #{collect(&:inspect).join ', '}]"
+		end
+		def default()  SmqlToAR::And  end
+		def default_new( parent)  default.new self, parent, false  end
+		def collect_build_where
+			collect {|x| x.respond_to?( :build_where) ? x.build_where : x.to_s }
+		end
+	end
+
+	class And < SubBuilder
+		def default; SmqlToAR::Or; end
+		def build_where
+			collect_build_where.join ' AND '
+		end
+	end
+
+	class Or < SubBuilder
+		def build_where
+			collect_build_where.join ' OR '
 		end
 	end
 end
