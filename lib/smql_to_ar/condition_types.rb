@@ -56,9 +56,11 @@ class SmqlToAR
 				r = nil
 				#p :try_parse => { :model => model, :colop => colop, :value => val }
 				conditions.each do |c|
-					raise_unless colop =~ /^(?:\d*:)?(.*?)(\W*)$/, UnexpectedColOpError.new( model, colop, val)
+					raise_unless colop =~ /^(?:\d*:)?(.*?)((?:\W*(?!\])\W)?)$/, UnexpectedColOpError.new( model, colop, val)
 					col, op = $1, $2
+					p col: col, op: op
 					col = split_keys( col).collect {|c| Column.new model, c }
+					p col: col
 					r = c.try_parse model, col, op, val
 					break  if r
 				end
@@ -246,6 +248,7 @@ class SmqlToAR
 					model, *sub = sub
 					t = table + col.path + [col.col]
 					col.joins.each {|j, m| builder.joins table+j, m }
+					p build_t: t
 					builder.joins t, model
 					b2 = 1 == sub.length ? builder : Or.new( builder)
 					sub.each {|i| i.collect( &it.build( And.new( b2), t)); p 'or' => b2 }

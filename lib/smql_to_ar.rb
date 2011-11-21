@@ -107,9 +107,9 @@ class SmqlToAR
 
 	# Model der Relation `rel` von `model`
 	def self.model_of model, rel
-		rel = rel.to_sym
-		r = model.reflections[ rel].andand.klass
-		r.nil? && :self == rel ? model : r
+		p model_of: rel.to_sym, model: model
+		r = model.reflections[ rel.to_sym].andand.klass
+		r.nil? && rel === :self ? model : r
 	end
 
 	# Eine Spalte in einer Tabelle, relativ zu `Column#model`.
@@ -120,10 +120,43 @@ class SmqlToAR
 		attr_reader :path, :col
 		attr_accessor :model
 
+		class Col
+			attr_accessor :col, :as
+			def initialize col, as = nil
+				if col.kind_of? Col
+					@col, @as = col.col, col.as
+				elsif /^(.*?)\[(.*)\]$/ =~ col.to_s
+					@col, @as = $1, $2
+				else
+					@col, @as = col.to_s, as.to_s
+					@as = nil  if @as.blank?
+				end
+			end
+
+			def to_s()  @col  end
+			def to_sym()  to_s.to_sym  end
+			def inspect()  "#{@col}[@#{@as}]"  end
+			def to_alias()  "#{@col}[#{@as}]"  end
+
+			def == other
+				other = Col.new other
+				@col = other.col  &&  @as == other.col
+			end
+
+			def === other
+				other = Col.new other
+				@col == other.col
+			end
+		end
+
 		def initialize model, *col
 			@model = model
 			@last_model = nil
-			*@path, @col = *Array.wrap( col).collect( &it.to_s.split( /[.\/]/)).flatten.collect( &:to_sym).reject( &it==:self)
+			*@path, @col = *Array.wrap( col).
+					collect( &it.to_s.split( /[.\/]/)).
+					flatten.
+					collect( &Col.method( :new)).
+					reject( &it===:self)
 		end
 
 		def last_model
@@ -132,9 +165,10 @@ class SmqlToAR
 
 		def each
 			model = @model
+			p each: self, path: @path
 			@path.each do |rel|
-				rel = rel.to_sym
-				unless :self == rel
+				p rel: rel
+				unless rel === :self
 					model = SmqlToAR.model_of model, rel
 					return false  unless model
 					yield rel, model
@@ -169,6 +203,7 @@ class SmqlToAR
 				exe.call pp, model
 			end
 	 	end
+
 		def self?()  !@col  end
 		def length() @path.length+(self.self? ? 0 : 1)  end
 		def size()   @path.size+(self.self? ? 0 : 1)  end

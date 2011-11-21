@@ -28,20 +28,27 @@ class SmqlToAR
 			def to_i()  @vid  end
 		end
 
+		class Aliases < Hash
+			def self.new prefix, *a, &e
+				e ||= lambda do |h, k|
+					j = Array.wrap( k).compact
+					h[k] = h.key?(j) ? h[j] : "#{prefix},#{j.collect( &:to_alias).join( ',')}"
+				end
+				super *a, &e
+			end
+		end
+
 		attr_reader :table_alias, :model, :table_model, :base_table, :_where, :_select, :_wobs, :_joins, :prefix, :_vid
 		attr_accessor :logger, :limit, :offset
 
 		def initialize model, prefix = nil
 			@prefix = "smql"
 			@logger = SmqlToAR.logger
-			@table_alias = Hash.new do |h, k|
-				j = Array.wrap( k).compact
-				h[k] = h.key?(j) ? h[j] : "#{@prefix},#{j.join(',')}"
-			end
+			@table_alias = Aliases.new @prefix
 			@_vid, @_where, @_wobs, @model, @quoter = 0, SmqlToAR::And[], {}, model, model.connection
-			@base_table = [model.table_name.to_sym]
+			@base_table = [Column::Col.new( model.table_name)]
 			@table_alias[ @base_table] = @base_table.first
-			t = quote_table_name @table_alias[ @base_table]
+			t = quote_table_name @base_table.first.col
 			@_select, @_joins, @_joined, @_includes, @_order = ["DISTINCT #{t}.*"], "", [@base_table], [], []
 			@table_model = {@base_table => @model}
 		end
@@ -49,7 +56,7 @@ class SmqlToAR
 		def vid()  Vid.new( @_vid+=1)  end
 
 		def inspect
-			"#<#{self.class.name}:#{"0x%x"% (self.object_id<<1)}|#{@prefix}:#{@base_table}:#{@model} vid=#{@_vid} where=#{@_where} wobs=#{@_wobs} select=#{@_select} aliases=#{@_table_alias}>"
+			"#<#{self.class.name}:#{"0x%x"% (self.object_id<<1)}|#{@prefix}:#{@base_table}:#{@model} vid=#{@_vid} where=#{@_where} wobs=#{@_wobs} select=#{@_select} aliases=#{@table_alias}>"
 		end
 
 		# Jede via where uebergebene Condition wird geodert und alle zusammen werden geundet.
@@ -71,14 +78,19 @@ class SmqlToAR
 		end
 
 		def quote_table_name name
+			name = case name
+				when Array, Column::Col then @table_alias[Array.wrap name]
+				else name.to_s
+				end
 			@quoter.quote_table_name( name).gsub /"\."/, ','
 		end
 
 		def column table, name
-			"#{quote_table_name table.kind_of?(String) ? table : @table_alias[table]}.#{quote_column_name name}"
+			"#{quote_table_name table}.#{quote_column_name name}"
 		end
 
 		def build_join orig, pretable, table, prekey, key
+			p build_join: {orig: orig, pretable: pretable, table: table, prekey: prekey, key: key}, alias: @table_alias
 			" LEFT JOIN #{orig} AS #{quote_table_name table} ON #{column pretable, prekey} = #{column table, key} "
 		end
 
@@ -92,13 +104,14 @@ class SmqlToAR
 			@table_model[ table] = model
 			premodel = @table_model[ pretable]
 			t = @table_alias[ table]
-			pt = quote_table_name @table_alias[ table[ 0...-1]]
-			refl = premodel.reflections[table.last]
+			pt = quote_table_name table[ 0...-1]
+			p table: table
+			refl = premodel.reflections[table.last.to_sym]
 			case refl
 			when ActiveRecord::Reflection::ThroughReflection
 				through = refl.through_reflection
-				throughtable = table[0...-1]+[through.name.to_sym]
-				srctable = throughtable+[refl.source_reflection.name]
+				throughtable = table[0...-1]+[Column::Col.new( through.name, table.last.as)]
+				srctable = throughtable+[Column::Col.new( refl.source_reflection.name, table.last.as)]
 				@table_model[ srctable] = model
 				@table_alias[ table] = @table_alias[ srctable]
 				join_ throughtable, through.klass, quote_table_name( through.table_name)
