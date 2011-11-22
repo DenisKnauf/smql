@@ -90,7 +90,6 @@ class SmqlToAR
 		end
 
 		def build_join orig, pretable, table, prekey, key
-			p build_join: {orig: orig, pretable: pretable, table: table, prekey: prekey, key: key}, alias: @table_alias
 			" LEFT JOIN #{orig} AS #{quote_table_name table} ON #{column pretable, prekey} = #{column table, key} "
 		end
 
@@ -105,7 +104,6 @@ class SmqlToAR
 			premodel = @table_model[ pretable]
 			t = @table_alias[ table]
 			pt = quote_table_name table[ 0...-1]
-			p table: table
 			refl = premodel.reflections[table.last.to_sym]
 			case refl
 			when ActiveRecord::Reflection::ThroughReflection

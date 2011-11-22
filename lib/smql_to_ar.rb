@@ -107,7 +107,6 @@ class SmqlToAR
 
 	# Model der Relation `rel` von `model`
 	def self.model_of model, rel
-		p model_of: rel.to_sym, model: model
 		r = model.reflections[ rel.to_sym].andand.klass
 		r.nil? && rel === :self ? model : r
 	end
@@ -165,9 +164,7 @@ class SmqlToAR
 
 		def each
 			model = @model
-			p each: self, path: @path
 			@path.each do |rel|
-				p rel: rel
 				unless rel === :self
 					model = SmqlToAR.model_of model, rel
 					return false  unless model
