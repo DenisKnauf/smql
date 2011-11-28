@@ -26,6 +26,9 @@ class SmqlToAR
 			def to_sym() "smql_c#{@vid}".to_sym end
 			alias sym to_sym
 			def to_i()  @vid  end
+			def === other
+				to_s === other || to_sym === other || to_i === other || self == other || self === other
+			end
 		end
 
 		class Aliases < Hash

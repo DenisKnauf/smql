@@ -99,7 +99,7 @@ class SmqlToAR
 				# Versuche das Objekt zu erkennen.  Operator und Expected muessen passen.
 				# Passt das Object,  die Klasse instanzieren.
 				def try_parse model, cols, op, val
-					#p :self => name, :try_parse => op, :cols => cols, :with => self::Operator, :value => val, :expected => self::Expected, :model => model.name
+					#p :class => self, :self => name, :try_parse => op, :cols => cols, :with => self::Operator, :value => val, :expected => self::Expected, :model => model.name
 					new model, cols, val  if self::Operator === op and self::Expected.any?( &it === val)
 				end
 
@@ -109,6 +109,7 @@ class SmqlToAR
 			end
 
 			def initialize model, cols, val
+				#p init: self, caller: caller
 				@model, @cols = model, cols
 				@value = case val
 					when Hash, Range then val
@@ -151,7 +152,7 @@ class SmqlToAR
 			#       #=> ( givenname = 'Peter' OR surname = 'Peter' ) AND ( givenname = 'Mueller' OR surname = 'Mueller' )
 			def build builder, table
 				values = Hash[ @value.collect {|value| [ builder.vid, value ] } ]
-				values.each {|k, v| builder.wobs k.sym => v }
+				values.each {|k, v| builder.wobs k.to_sym => v }
 				if 1 == @cols.length
 					@cols.each do |col|
 						col.joins builder, table
@@ -177,7 +178,7 @@ class SmqlToAR
 			Where = "%s NOT BETWEEN %s AND %s"
 			Expected = [Range, lambda {|val| Array === val && 2 == val.length } ]
 
-			def initialze model, cols, val
+			def initialize model, cols, val
 				if Array === val && 2 == val.length
 					f, l = val
 					f, l = Time.parse(f), Time.parse(l)  if f.kind_of? String
@@ -187,7 +188,7 @@ class SmqlToAR
 			end
 
 			def build builder, table
-				builder.wobs (v1 = builder.vid) => @value.begin, (v2 = builder.vid) => @value.end
+				builder.wobs (v1 = builder.vid).to_sym => @value.begin, (v2 = builder.vid).to_sym => @value.end
 				@cols.each do |col|
 					col.joins builder, table
 					builder.where self.class::Where % [ builder.column( table+col.path, col.col), v1, v2]
@@ -242,13 +243,19 @@ class SmqlToAR
 			end
 
 			def build builder, table
+				if 2 < @cols.first.second.length
+					b2, b3 = And, Or
+				else
+					b2, b3 = Or, And
+				end
+				b2 = b2.new builder
 				@cols.each do |col, sub|
 					model, *sub = sub
 					t = table + col.path + [col.col]
 					col.joins.each {|j, m| builder.joins table+j, m }
 					builder.joins t, model
-					b2 = 1 == sub.length ? builder : Or.new( builder)
-					sub.each {|i| i.collect( &it.build( And.new( b2), t)) }
+					b4 = b3.new( b2)
+					sub.each {|i| i.collect( &it.build( And.new( b4), t)) }
 				end
 				self
 			end
