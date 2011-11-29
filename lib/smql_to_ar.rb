@@ -120,6 +120,7 @@ class SmqlToAR
 		attr_accessor :model
 
 		class Col
+			include Comparable
 			attr_accessor :col, :as
 			def initialize col, as = nil
 				if col.kind_of? Col
