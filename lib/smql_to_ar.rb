@@ -139,12 +139,11 @@ class SmqlToAR
 
 			def == other
 				other = Col.new other
-				@col = other.col  &&  @as == other.col
+				@col == other.col  &&  @as == other.as
 			end
 
 			def === other
-				other = Col.new other
-				@col == other.col
+				@col == Col.new( other).col
 			end
 		end
 
