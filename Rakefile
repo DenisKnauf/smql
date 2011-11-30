@@ -15,7 +15,6 @@ begin
 		gem.add_dependency 'activerecord'
 		gem.add_dependency 'activesupport'
 		gem.add_dependency 'json'
-		gem.add_dependency 'methodphitamine'
   end
   Jeweler::GemcutterTasks.new
 rescue LoadError

@@ -100,7 +100,7 @@ class SmqlToAR
 				# Passt das Object,  die Klasse instanzieren.
 				def try_parse model, cols, op, val
 					#p :class => self, :self => name, :try_parse => op, :cols => cols, :with => self::Operator, :value => val, :expected => self::Expected, :model => model.name
-					new model, cols, val  if self::Operator === op and self::Expected.any?( &it === val)
+					new model, cols, val  if self::Operator === op and self::Expected.any? {|x| x === val}
 				end
 
 				def inspect
@@ -225,7 +225,7 @@ class SmqlToAR
 		# { 'articles=>' => [ { id: 1 }, { id: 2 } ] }
 		class EqualJoin <Condition
 			Operator = '=>'
-			Expected = [Hash, lambda {|x| x.kind_of?( Array) and x.all?( &it.kind_of?( Hash))}]
+			Expected = [Hash, lambda {|x| x.kind_of?( Array) and x.all? {|y| y.kind_of?( Hash) }}]
 
 			def initialize *pars
 				super( *pars)
@@ -255,7 +255,10 @@ class SmqlToAR
 					col.joins.each {|j, m| builder.joins table+j, m }
 					builder.joins t, model
 					b4 = b3.new( b2)
-					sub.each {|i| i.collect( &it.build( And.new( b4), t)) }
+					sub.each do |i|
+						b5 = And.new b4
+						i.collect {|j| j.build b5, t }
+					end
 				end
 				self
 			end
@@ -293,7 +296,7 @@ class SmqlToAR
 					t = table+col.to_a
 					builder.sub_joins t, col, *sub[0..1]
 					#ap sub: sub[2..-1]
-					sub[2..-1].each &it.build( builder, t)
+					sub[2..-1].each {|x| x.build builder, t }
 				end
 				self
 			end
@@ -345,7 +348,7 @@ class SmqlToAR
 
 				class <<self
 					def try_parse model, func, args
-						self.new model, func, args  if self::Name === func and self::Expected.any?( &it === args)
+						self.new model, func, args  if self::Name === func and self::Expected.any? {|x| x === args }
 					end
 
 					def inspect

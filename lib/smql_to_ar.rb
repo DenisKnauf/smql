@@ -152,10 +152,10 @@ class SmqlToAR
 			@model = model
 			@last_model = nil
 			*@path, @col = *Array.wrap( col).
-					collect( &it.to_s.split( /[.\/]/)).
+					collect {|x| x.to_s.split /[.\/]/ }.
 					flatten.
 					collect( &Col.method( :new)).
-					reject( &it===:self)
+					reject {|x| x === :self }
 		end
 
 		def last_model
