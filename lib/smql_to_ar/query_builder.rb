@@ -244,7 +244,7 @@ class SmqlToAR
 		def default()  SmqlToAR::And  end
 		def default_new( parent)  default.new self, parent, false  end
 		def collect_build_where
-			collect {|x| x.respond_to?( :build_where) ? x.build_where : x.to_s }
+			collect {|x| "( #{x.respond_to?( :build_where) ? x.build_where : x.to_s } )" }
 		end
 	end
 
