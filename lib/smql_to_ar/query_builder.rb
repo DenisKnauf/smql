@@ -124,7 +124,7 @@ class SmqlToAR
 				when :belongs_to
 					@_joins += build_join query, pretable, t, refl.primary_key_name, premodel.primary_key
 				when :has_and_belongs_to_many
-					jointable = [','] + table
+					jointable = [Column::Col.new('')] + table
 					@_joins += build_join refl.options[:join_table], pretable, @table_alias[jointable], premodel.primary_key, refl.primary_key_name
 					@_joins += build_join query, jointable, t, refl.association_foreign_key, refl.association_primary_key
 				else raise BuilderError, "Unkown reflection macro: #{refl.macro.inspect}"
