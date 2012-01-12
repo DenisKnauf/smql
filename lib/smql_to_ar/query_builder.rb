@@ -32,12 +32,35 @@ class SmqlToAR
 		end
 
 		class Aliases < Hash
-			def self.new prefix, *a, &e
-				e ||= lambda do |h, k|
-					j = Array.wrap( k).compact
-					h[k] = h.key?(j) ? h[j] : "#{prefix},#{j.collect( &:to_alias).join( ',')}"
-				end
+			attr_accessor :counter, :prefix
+
+			def initialize prefix, *a, &e
+				@counter, @prefix = 0, prefix || 'smql'
 				super *a, &e
+			end
+
+			def format name
+				pre, suf = name.split( ',', 2)
+				return name  unless suf
+				pre += ",#{@counter += 1},"
+				l = 60-pre.length
+				n = suf[(suf.length<=l ? 0 : -l)..-1]
+				n == suf ? pre+n : "#{pre},,,#{n}"
+			end
+
+			def name n
+				n.collect( &:to_alias).join ','
+			end
+
+			def [] k
+				n = name k
+				v = super n
+				v = self[k] = format( "#{prefix},#{n}")  unless v
+				v
+			end
+
+			def []= k, v
+				super name( k), v
 			end
 		end
 
@@ -48,7 +71,7 @@ class SmqlToAR
 			@prefix = "smql"
 			@logger = SmqlToAR.logger
 			@table_alias = Aliases.new @prefix
-			@_vid, @_where, @_wobs, @model, @quoter = 0, SmqlToAR::And[], {}, model, model.connection
+			@_vid, @_where, @_wobs, @model, @quote = 0, SmqlToAR::And[], {}, model, model.connection
 			@base_table = [Column::Col.new( model.table_name)]
 			@table_alias[ @base_table] = @base_table.first
 			t = quote_table_name @base_table.first.col
@@ -77,7 +100,7 @@ class SmqlToAR
 		end
 
 		def quote_column_name name
-			@quoter.quote_column_name( name).gsub /"\."/, ','
+			@quote.quote_column_name( name).gsub /"\."/, ','
 		end
 
 		def quote_table_name name
@@ -85,7 +108,7 @@ class SmqlToAR
 				when Array, Column::Col then @table_alias[Array.wrap name]
 				else name.to_s
 				end
-			@quoter.quote_table_name( name).gsub /"\."/, ','
+			@quote.quote_table_name name
 		end
 
 		def column table, name
@@ -93,7 +116,7 @@ class SmqlToAR
 		end
 
 		def build_join orig, pretable, table, prekey, key
-			" LEFT JOIN #{orig} AS #{quote_table_name table} ON #{column pretable, prekey} = #{column table, key} "
+			"\tLEFT JOIN #{orig} AS #{quote_table_name table}\n\tON #{column pretable, prekey} = #{column table, key}\n"
 		end
 
 		def sub_joins table, col, model, query
@@ -104,7 +127,8 @@ class SmqlToAR
 		def join_ table, model, query, pretable = nil
 			pretable ||= table[0...-1]
 			@table_model[ table] = model
-			premodel = @table_model[ pretable]
+			@table_model.rehash
+			premodel = @table_model.find {|k,v| pretable == k }[1]
 			t = @table_alias[ table]
 			pt = quote_table_name table[ 0...-1]
 			refl = premodel.reflections[table.last.to_sym]
@@ -124,7 +148,7 @@ class SmqlToAR
 				when :belongs_to
 					@_joins += build_join query, pretable, t, refl.primary_key_name, premodel.primary_key
 				when :has_and_belongs_to_many
-					jointable = [Column::Col.new('')] + table
+					jointable = [','] + table
 					@_joins += build_join refl.options[:join_table], pretable, @table_alias[jointable], premodel.primary_key, refl.primary_key_name
 					@_joins += build_join query, jointable, t, refl.association_foreign_key, refl.association_primary_key
 				else raise BuilderError, "Unkown reflection macro: #{refl.macro.inspect}"
@@ -195,7 +219,7 @@ class SmqlToAR
 
 	class SubBuilder < Array
 		attr_reader :parent, :_where
-		delegate :wobs, :joins, :includes, :sub_joins, :vid, :quote_column_name, :quoter, :quote_table_name, :column, :to => :parent
+		delegate :wobs, :joins, :includes, :sub_joins, :vid, :quote_column_name, :quote, :quote_table_name, :column, :to => :parent
 
 		def initialize parent, tmp = false
 			@parent = parent
@@ -244,7 +268,7 @@ class SmqlToAR
 		def default()  SmqlToAR::And  end
 		def default_new( parent)  default.new self, parent, false  end
 		def collect_build_where
-			collect {|x| "( #{x.respond_to?( :build_where) ? x.build_where : x.to_s } )" }
+			collect {|x| x.respond_to?( :build_where) ? x.build_where : x.to_s }
 		end
 	end
 
