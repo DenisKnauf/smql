@@ -222,10 +222,8 @@ class SmqlToAR
 				SmqlToAR.logger = ::Rails.logger
 			end
 		end
-	else
-		require 'logger'
-		@@logger = Logger.new $stdout
 	end
+	@@logger = ::Rails.logger || begin require 'logger'; Logger.new( $stdout) end
 
 	class <<self
 		def logger=(logger)  @@logger = logger  end
@@ -294,6 +292,7 @@ class SmqlToAR
 	def self.reload_library
 		lib_dir = File.dirname __FILE__
 		fj = lambda {|*a| File.join lib_dir, *a }
+		Object.send :remove_const, :SmqlToAR
 		load fj.call( 'smql_to_ar.rb')
 		load fj.call( 'smql_to_ar', 'condition_types.rb')
 		load fj.call( 'smql_to_ar', 'query_builder.rb')

@@ -14,6 +14,9 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+# TODO:
+# * Array als Typ ist zu allgemein. Allgemeine Lösung gesucht, um die Typen im Array angeben zu können.
+
 class SmqlToAR
 	#############################################################################
 	# Alle Subklassen (qualitativ: ConditionTypes::*), die als Superklasse Condition haben,
@@ -104,7 +107,7 @@ class SmqlToAR
 				end
 
 				def inspect
-					"#{self.name}(:operator=>#{self::Operator.inspect}, :expected=>#{self::Expected.inspect}, :where=>#{self::Where.inspect})"
+					"#{self.name}( :operator=>#{self::Operator.inspect}, :expected=>#{self::Expected.inspect}, :where=>#{self::Where.inspect})"
 				end
 			end
 
@@ -175,11 +178,11 @@ class SmqlToAR
 
 		class NotInRange < Condition
 			Operator = '!..'
-			Where = "%s NOT BETWEEN %s AND %s"
+			Where = '%s NOT BETWEEN %s AND %s'
 			Expected = [Range, lambda {|val| Array === val && 2 == val.length } ]
 
 			def initialize model, cols, val
-				if Array === val && 2 == val.length
+				if Array === val
 					f, l = val
 					f, l = Time.parse(f), Time.parse(l)  if f.kind_of? String
 					val = f..l
@@ -196,7 +199,45 @@ class SmqlToAR
 				self
 			end
 		end
-		InRange = simple_condition NotInRange, '..', "%s BETWEEN %s AND %s"
+		InRange = simple_condition NotInRange, '..', '%s BETWEEN %s AND %s'
+
+		class NotOverlaps < Condition
+			Operator, Where = '<!>', 'NOT (%s, %s) OVERLAPS (%s, %s)'
+			Expected = [Range, lambda {|val|
+					Array === val && 2 == val.length &&
+						[Time, Date, String].any? {|v|v===val[0]} &&
+						[Numeric, String].any? {|v|v===val[1]}
+				}]
+
+			def initialize model, cols, val
+				if Array === val
+					f = Time.parse( val[0]).localtime
+					l = val[1]
+					l = case l
+						when String then Time.parse( l).localtime
+						when Numeric then f+l
+						else raise ArgumentError, "Unexpected type for end-value #{l.inspect}"
+						end
+					f += f.utc_offset
+					l += l.utc_offset
+					val = f.utc..l.utc
+				end
+				super model, cols, val
+			end
+
+			def build builder, table
+				builder.wobs (v1 = builder.vid).to_sym => @value.begin, (v2 = builder.vid).to_sym => @value.end
+				v1 = "TIMESTAMP #{v1}"
+				v2 = "TIMESTAMP #{v2}"
+				@cols.each do |col|
+					col.joins builder, table
+				end.each_slice 2 do |f,s|
+					builder.where self.class::Where % [
+						builder.column( table+f.path, f.col), builder.column( table+s.path, s.col), v1, v2]
+				end
+			end
+		end
+		Overlaps = simple_condition NotOverlaps, '<=>', '(%s, %s) OVERLAPS (%s, %s)'
 
 		class NotIn < Condition
 			Operator = '!|='
@@ -219,6 +260,13 @@ class SmqlToAR
 		NotEqual2 = simple_condition Condition, '<>', "%s <> %s", [Array, String, Numeric]
 		GreaterThanOrEqual = simple_condition Condition, '>=', "%s >= %s", [Array, Numeric]
 		LesserThanOrEqual = simple_condition Condition, '<=', "%s <= %s", [Array, Numeric]
+		class StringTimeGreaterThanOrEqual < Condition
+			Operator, Where, Expected = '>=', '%s >= %s', [Time, Date, String]
+			def initialize model, cols, val
+				super model, cols, Time.parse( val.to_s)
+			end
+		end
+		StringTimeLesserThanOrEqual = simple_condition StringTimeGreaterThanOrEqual, '<=', "%s <= %s"
 
 		# Examples:
 		# { 'articles=>' => { id: 1 } }
@@ -303,10 +351,12 @@ class SmqlToAR
 		end
 =end
 
-		Equal = simple_condition Condition, '=', "%s = %s", [Array, String, Numeric]
-		Equal2 = simple_condition Equal, '', "%s = %s", [String, Numeric]
+		Equal = simple_condition Condition, '=', "%s = %s", [Array, String, Numeric, Date, Time]
+		Equal2 = simple_condition Equal, '', "%s = %s", [String, Numeric, Date, Time]
 		GreaterThan = simple_condition Condition, '>', "%s > %s", [Array, Numeric]
+		StringTimeGreaterThan = simple_condition StringTimeGreaterThanOrEqual, '>', "%s > %s"
 		LesserThan = simple_condition Condition, '<', "%s < %s", [Array, Numeric]
+		StringTimeLesserThan = simple_condition StringTimeGreaterThanOrEqual, '<', "%s < %s"
 		NotIlike = simple_condition Condition, '!~', "%s NOT ILIKE %s", [Array, String]
 		Ilike = simple_condition Condition, '~', "%s ILIKE %s", [Array, String]
 		Exists = simple_condition Condition, '', '%s IS NOT NULL', [TrueClass]
@@ -352,7 +402,7 @@ class SmqlToAR
 					end
 
 					def inspect
-						"#{self.name}(:name=>#{self::Name}, :expected=>#{self::Expected})"
+						"#{self.name}( :name=>#{self::Name}, :expected=>#{self::Expected})"
 					end
 				end
 
