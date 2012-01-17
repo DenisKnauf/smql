@@ -135,25 +135,25 @@ class SmqlToAR
 			case refl
 			when ActiveRecord::Reflection::ThroughReflection
 				through = refl.through_reflection
-				throughtable = table[0...-1]+[Column::Col.new( through.name, table.last.as)]
-				srctable = throughtable+[Column::Col.new( refl.source_reflection.name, table.last.as)]
+				through_table = table[0...-1]+[Column::Col.new( through.name, table.last.as)]
+				srctable = through_table+[Column::Col.new( refl.source_reflection.name, table.last.as)]
 				@table_model[ srctable] = model
 				@table_alias[ table] = @table_alias[ srctable]
-				join_ throughtable, through.klass, quote_table_name( through.table_name)
-				join_ srctable, refl.klass, query, throughtable
+				join_ through_table, through.klass, quote_table_name( through.table_name)
+				join_ srctable, refl.klass, query, through_table
 			when ActiveRecord::Reflection::AssociationReflection
 				case refl.macro
 				when :has_many, :has_one
-					@_joins += build_join query, pretable, t, premodel.primary_key, refl.primary_key_name
+					@_joins += build_join query, pretable, t, premodel.primary_key, refl.foreign_key
 				when :belongs_to
-					@_joins += build_join query, pretable, t, refl.primary_key_name, premodel.primary_key
+					@_joins += build_join query, pretable, t, refl.foreign_key, premodel.primary_key
 				when :has_and_belongs_to_many
 					jointable = [Column::Col.new(',')] + table
-					@_joins += build_join refl.options[:join_table], pretable, @table_alias[jointable], premodel.primary_key, refl.primary_key_name
+					@_joins += build_join refl.options[:join_table], pretable, @table_alias[ jointable], premodel.primary_key, refl.foreign_key
 					@_joins += build_join query, jointable, t, refl.association_foreign_key, refl.association_primary_key
 				else raise BuilderError, "Unkown reflection macro: #{refl.macro.inspect}"
 				end
-			else raise BuilderError, "Unkown reflection type: #{refl.class.name}"
+			else raise BuilderError, "Unkown reflection type: #{refl.class.name} #{refl.macro.inspect}"
 			end
 			self
 		end

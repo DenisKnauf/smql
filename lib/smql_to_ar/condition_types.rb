@@ -153,7 +153,7 @@ class SmqlToAR
 			# 2) {"givenname=", ["Peter", "Hans"]} #=> ( givenname = 'Peter' OR givenname = 'Hans' )
 			# 3) {"givenname|surname=", ["Peter", "Mueller"]}
 			#       #=> ( givenname = 'Peter' OR surname = 'Peter' ) AND ( givenname = 'Mueller' OR surname = 'Mueller' )
-			def build builder, table
+			def condition_build builder, table
 				values = Hash[ @value.collect {|value| [ builder.vid, value ] } ]
 				values.each {|k, v| builder.wobs k.to_sym => v }
 				if 1 == @cols.length
@@ -174,6 +174,7 @@ class SmqlToAR
 				end
 				self
 			end
+			alias build condition_build
 		end
 
 		class NotInRange < Condition
@@ -190,7 +191,7 @@ class SmqlToAR
 				super model, cols, val
 			end
 
-			def build builder, table
+			def not_in_range_build builder, table
 				builder.wobs (v1 = builder.vid).to_sym => @value.begin, (v2 = builder.vid).to_sym => @value.end
 				@cols.each do |col|
 					col.joins builder, table
@@ -198,11 +199,12 @@ class SmqlToAR
 				end
 				self
 			end
+			alias build not_in_range_build
 		end
 		InRange = simple_condition NotInRange, '..', '%s BETWEEN %s AND %s'
 
-		class NotOverlaps < Condition
-			Operator, Where = '<!>', 'NOT (%s, %s) OVERLAPS (%s, %s)'
+		class Overlaps < Condition
+			Operator, Where = '<=>', '(%s, %s) OVERLAPS (%s, %s)'
 			Expected = [Range, lambda {|val|
 					Array === val && 2 == val.length &&
 						[Time, Date, String].any? {|v|v===val[0]} &&
@@ -225,7 +227,7 @@ class SmqlToAR
 				super model, cols, val
 			end
 
-			def build builder, table
+			def overlaps_build builder, table
 				builder.wobs (v1 = builder.vid).to_sym => @value.begin, (v2 = builder.vid).to_sym => @value.end
 				v1 = "TIMESTAMP #{v1}"
 				v2 = "TIMESTAMP #{v2}"
@@ -236,15 +238,16 @@ class SmqlToAR
 						builder.column( table+f.path, f.col), builder.column( table+s.path, s.col), v1, v2]
 				end
 			end
+			alias build overlaps_build
 		end
-		Overlaps = simple_condition NotOverlaps, '<=>', '(%s, %s) OVERLAPS (%s, %s)'
+		NotOverlaps = simple_condition Overlaps, '<=>', 'NOT (%s, %s) OVERLAPS (%s, %s)'
 
 		class NotIn < Condition
 			Operator = '!|='
 			Where = "%s NOT IN (%s)"
 			Expected = [Array]
 
-			def build builder, table
+			def not_in_build builder, table
 				builder.wobs (v = builder.vid).to_sym => @value
 				@cols.each do |col|
 					col.joins builder, table
@@ -252,6 +255,7 @@ class SmqlToAR
 				end
 				self
 			end
+			alias build not_in_build
 		end
 
 		In = simple_condition NotIn, '|=', '%s IN (%s)', [Array]
@@ -290,7 +294,7 @@ class SmqlToAR
 				raise_unless col.relation, NonExistingRelationError.new( %w[Relation], col)
 			end
 
-			def build builder, table
+			def equal_join_build builder, table
 				if 2 < @cols.first.second.length
 					b2, b3 = And, Or
 				else
@@ -300,7 +304,7 @@ class SmqlToAR
 				@cols.each do |col, sub|
 					model, *sub = sub
 					t = table + col.path + [col.col]
-					col.joins.each {|j, m| builder.joins table+j, m }
+					col.joins builder, table
 					builder.joins t, model
 					b4 = b3.new( b2)
 					sub.each do |i|
@@ -310,6 +314,7 @@ class SmqlToAR
 				end
 				self
 			end
+			alias build equal_join_build
 		end
 
 		# Takes to Queries.
@@ -339,7 +344,7 @@ class SmqlToAR
 				raise_unless col.child?, ConColumnError.new( [:Column], col)
 			end
 
-			def build builder, table
+			def sub_equal_join_build builder, table
 				@cols.each do |col, sub|
 					t = table+col.to_a
 					builder.sub_joins t, col, *sub[0..1]
@@ -348,6 +353,7 @@ class SmqlToAR
 				end
 				self
 			end
+			alias build sub_equal_join_build
 		end
 =end
 
@@ -372,7 +378,7 @@ class SmqlToAR
 				raise_unless col.exist_in? || SmqlToAR.model_of( col.last_model, col.col), NonExistingSelectableError.new( col)
 			end
 
-			def build builder, table
+			def select_build builder, table
 				@cols.each do |col|
 					if col.exist_in?
 						col.joins builder, table
@@ -384,6 +390,7 @@ class SmqlToAR
 				end
 				self
 			end
+			alias build select_build
 		end
 
 		class Functions < Condition
@@ -432,7 +439,7 @@ class SmqlToAR
 					super model, func, args
 				end
 
-				def build builder, table
+				def order_build builder, table
 					return  if @args.blank?
 					@args.each do |o|
 						col, o = o
@@ -442,26 +449,29 @@ class SmqlToAR
 						builder.order t, col.col, o
 					end
 				end
+				alias build order_build
 			end
 
 			class Limit < Function
 				Name = :limit
 				Expected = [Fixnum]
 
-				def build builder, table
+				def limit_build builder, table
 					raise_unless 1 == table.length, RootOnlyFunctionError.new( table)
 					builder.limit = Array.wrap(@args).first.to_i
 				end
+				alias build limit_build
 			end
 
 			class Offset < Function
 				Name = :offset
 				Expected = [Fixnum]
 
-				def build builder, table
+				def offset_build builder, table
 					raise_unless 1 == table.length, RootOnlyFunctionError.new( table)
 					builder.offset = Array.wrap(@args).first.to_i
 				end
+				alias build offset_build
 			end
 
 			def self.new model, col, val
