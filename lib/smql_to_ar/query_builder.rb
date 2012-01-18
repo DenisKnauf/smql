@@ -248,12 +248,14 @@ class SmqlToAR
 		def optimize!
 			ext = []
 			collect! do |sub|
-				sub = sub.optimize!  if sub.kind_of? Array
+				sub = sub.optimize!  if sub.kind_of? SubBuilder
 				if self.class == sub.class
 					ext.push *sub
 					nil
 				elsif sub.blank?
 					nil
+				elsif 1 == sub.size
+					sub.first
 				else
 					sub
 				end
@@ -267,21 +269,22 @@ class SmqlToAR
 		end
 		def default()  SmqlToAR::And  end
 		def default_new( parent)  default.new self, parent, false  end
-		def collect_build_where
-			collect {|x| x.respond_to?( :build_where) ? x.build_where : x.to_s }
+		def collect_build_where indent = nil
+			indent = (indent||0) + 1
+			collect {|x| "(#{x.respond_to?( :build_where) ? x.build_where( indent) : x.to_s})" }
 		end
 	end
 
 	class And < SubBuilder
 		def default; SmqlToAR::Or; end
-		def build_where
-			collect_build_where.join ' AND '
+		def build_where indent = nil
+			collect_build_where( indent).join " AND\n"+"\t"*(indent||0)
 		end
 	end
 
 	class Or < SubBuilder
-		def build_where
-			collect_build_where.join ' OR '
+		def build_where indent = nil
+			collect_build_where( indent).join " OR\n"+"\t"*(indent||0)
 		end
 	end
 end
