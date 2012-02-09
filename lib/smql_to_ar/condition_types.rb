@@ -203,6 +203,7 @@ class SmqlToAR
 		end
 		InRange = simple_condition NotInRange, '..', '%s BETWEEN %s AND %s'
 
+		# Every key-pair will be ORed.  No multiple values possible.
 		class Overlaps < Condition
 			Operator, Where = '<=>', '(%s, %s) OVERLAPS (%s, %s)'
 			Expected = [Range, lambda {|val|
@@ -228,6 +229,7 @@ class SmqlToAR
 			end
 
 			def overlaps_build builder, table
+				builder = Or.new builder
 				builder.wobs (v1 = builder.vid).to_sym => @value.begin, (v2 = builder.vid).to_sym => @value.end
 				v1 = "TIMESTAMP #{v1}"
 				v2 = "TIMESTAMP #{v2}"
