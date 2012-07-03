@@ -43,9 +43,9 @@ class SmqlToAR
 	# Die eigentliche Exception wird in @data[:exception] hinterlegt.
 	class SubSMQLError < SMQLError
 		def initialize query, model, exception
-			ex = {:class => exception.class, :message => exception.message}
+			ex = {class: exception.class, message: exception.message}
 			ex[:data] = exception.data  if exception.respond_to? :data
-			super :query => query, :model => model.to_s, :exception => ex
+			super query: query, model: model.to_s, exception: ex
 			set_backtrace exception.backtrace
 		end
  	end
@@ -55,49 +55,49 @@ class SmqlToAR
 	# Malformed ColOp
 	class UnexpectedColOpError < ParseError
 		def initialize model, colop, val
-			super :got => colop, :val => val, :model => model.to_s
+			super got: colop, val: val, model: model.to_s
 		end
 	end
 
 	class UnexpectedError < ParseError
 		def initialize model, colop, val
-			super :got => {colop => val}, :model => model.to_s
+			super got: {colop => val}, model: model.to_s
 		end
 	end
 
 	class NonExistingSelectableError < SMQLError
 		def initialize got
-			super :got => got
+			super got: got
 		end
 	end
 
 	class NonExistingColumnError < SMQLError
 		def initialize expected, got
-			super :expected => expected, :got => got
+			super expected: expected, got: got
 		end
 	end
 
 	class NonExistingRelationError < SMQLError
 		def initialize expected, got
-			super :expected => expected, :got => got
+			super expected: expected, got: got
 		end
 	end
 
 	class ProtectedColumnError < SMQLError
 		def initialize protected_column
-			super :protected_column => protected_column
+			super protected_column: protected_column
 		end
  	end
 
 	class RootOnlyFunctionError < SMQLError
 		def initialize path
-			super :path => path
+			super path: path
 		end
 	end
 
 	class ConColumnError < SMQLError
 		def initialize expected, got
-			super :expected => expected, :got => got
+			super expected: expected, got: got
 		end
 	end
 
@@ -243,8 +243,8 @@ class SmqlToAR
 			refls = model.respond_to?( :reflections) && model.reflections
 			refls && refls.each do |name, refl|
 				r[model.name][name] = case refl
-					when ActiveRecord::Reflection::ThroughReflection then {:macro => refl.macro, :model => refl.klass.name, :through => refl.through_reflection.name}
-					when ActiveRecord::Reflection::AssociationReflection then {:macro => refl.macro, :model => refl.klass.name}
+					when ActiveRecord::Reflection::ThroughReflection then {macro: refl.macro, model: refl.klass.name, through: refl.through_reflection.name}
+					when ActiveRecord::Reflection::AssociationReflection then {macro: refl.macro, model: refl.klass.name}
 					else raise "Ups: #{refl.class}"
 					end
 				models.push refl.klass  unless r.keys.include? refl.klass.name
@@ -293,8 +293,26 @@ class SmqlToAR
 		lib_dir = File.dirname __FILE__
 		fj = lambda {|*a| File.join lib_dir, *a }
 		Object.send :remove_const, :SmqlToAR
-		load fj.call( 'smql_to_ar.rb')
-		load fj.call( 'smql_to_ar', 'condition_types.rb')
-		load fj.call( 'smql_to_ar', 'query_builder.rb')
+		load fj[ 'smql_to_ar.rb']
+		load fj[ 'smql_to_ar', 'condition_types.rb']
+		load fj[ 'smql_to_ar', 'query_builder.rb']
+	end
+
+	module ActiveRecordExtensions
+		def self.included base
+			base.extend ClassMethods
+		end
+
+		module ClassMethods
+			def smql *params
+				SmqlToAR.to_ar self, *params
+			end
+
+			def smql_protected
+				[]
+			end
+		end
 	end
 end
+
+ActiveRecord::Base.send :include, SmqlToAR::ActiveRecordExtensions
