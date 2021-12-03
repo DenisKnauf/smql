@@ -1,3 +1,0 @@
-1) gem-plugin
-2) deprecated-warnings rails 3.1:
-	* DEPRECATION WARNING: primary_key_name is deprecated and will be removed from Rails 3.2 (use foreign_key instead).
